@@ -1,0 +1,221 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Jun  1 15:42:19 2022
+
+@author: teohz
+"""
+from i24_database_api.db_reader import DBReader
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+import matplotlib.animation as animation
+import numpy as np
+import cmd
+import json
+import os
+
+class OverheadVisualizer():
+    """
+    Overhead Visualizer utilizes i24_database_api to query trajectories
+    information and plot a visualization of the vehicles.
+    """
+    
+    def __init__(self, config):
+        """
+        Initializes an Overhead Traffic VIsualizer object
+        
+        Parameters
+        ----------
+        config : object
+        """
+        self.dbr = DBReader(host=config["host"], 
+                       port=config["port"], 
+                       username=config["username"], 
+                       password=config["password"], 
+                       database_name=config["database_name"], 
+                       collection_name=config["collection_name"])
+        self.anim = None
+        
+    def get_trajectory_information(self):
+        """
+        Prints some basic trajectory information of the database collection
+        """
+        # Number of trajectories
+        print("# of trajectories:", self.dbr.count())
+        
+        # Number of unique coarse_vehicle_class (quite slow)
+        # [0, 1, 2, 3, 4, 5]
+        # print(self.dbr.collection.distinct("coarse_vehicle_class"))
+        
+        # Document keys
+        print("Keys:")
+        cmd.Cmd().columnize(list(self.dbr.get_keys()), displaywidth=80)
+    
+    def visualize_road_segment(self, 
+                               start=14500, end=15000, 
+                               offset_frames=0, 
+                               save=False,
+                               frames=500): 
+        """
+        Visualizes a road segment by continuously querying the database for 
+        trajectories whose x_position lies between start and end at the 
+        timestamp_counter
+
+        Parameters
+        ----------
+        start : INT (represent start road segment in feet)
+        end : INT (represent end road segment in feet)
+        offset_frames : INT (represent how many frames to skip initially)
+        save : BOOLEAN (save visualization as video)
+        frames : INT (number of frames to visualize)
+        """
+        
+        # set up matplotlib
+        fig = plt.figure()
+        ax1 = fig.add_subplot(111)
+        ax1.set_aspect('equal', 'box')
+        ax1.set(ylim=[-5,60])
+        ax1.set_title("Bird-eye view")
+        ax1.set(xlim=[max(start, end), min(start, end)])
+        frame_text = ax1.text(max(ax1.get_xlim()), max(ax1.get_ylim()), 'Frame 0', fontsize=12)
+        
+        # queries all documents where the first element of x_position array 
+        # ... lies between start and end
+        traj_data = self.dbr.get_range("x_position.0", start - 50, end + 50)
+        
+        def init():
+            return ax1,
+        
+        # approach #1: query every frame
+        def animate(i, traj_data, frame_text):
+            frame_text.set_text('Frame {}'.format(i))
+            i = i + offset_frames
+            colors = ['r', 'b', 'g', 'm', 'y', 'k']
+            # re-query from db 
+            traj_data = self.dbr.get_range("x_position.{}".format(i), 
+                                           start - 50, end + 50)
+            
+            # remove all car_boxes
+            for box in list(ax1.patches):
+                box.set_visible(False)
+                box.remove()
+            
+            # update all cars by 1 timestamp
+            for car_data in traj_data: 
+                # animate car
+                # print("querying car!")
+                x = car_data["x_position"]
+                y = car_data["y_position"]
+                width = car_data["width"][0]
+                length = car_data["length"][0]
+                car_id = car_data["ID"]
+                class_id = car_data["coarse_vehicle_class"]
+                
+                box = patches.Rectangle((x[i], y[i]), length, width, color=colors[class_id])
+                ax1.add_patch(box)
+                
+            return ax1,
+
+        self.anim = animation.FuncAnimation(fig, func=animate,
+                                            init_func= init,
+                                            frames=frames,
+                                            repeat=False,
+                                            interval=20,
+                                            fargs=(traj_data,frame_text,),
+                                            blit=False)
+        
+        if save:
+            self.anim.save('animation.mp4', writer='ffmpeg', fps=30)
+        plt.show()
+        print("complete")
+        
+    def visualize_follow_car(self):
+        """
+        Visualizes a continuously moving road segment by following a given car.
+        This method continuously queries the database for trajectories whose
+        x_position lies around the x_position of the given car. 
+        """
+        
+        return
+    
+if True and __name__=="__main__":
+    
+    os.chdir("/isis/home/teohz/Desktop/videowall")
+    with open('config.json') as f:
+        config = json.load(f)
+    
+    viz = OverheadVisualizer(config)    
+    # viz.get_trajectory_information()
+    
+    viz.visualize_road_segment(save=False)
+    
+    
+    #%% Test plot a vehicle moving 
+    
+    # get data
+    test_traj = viz.dbr.get_range("x_position.0", 15000, 16000)[0]
+    x = test_traj["x_position"]
+    y = test_traj["y_position"]
+    width = test_traj["width"][0] # 5.57736
+    length = test_traj["length"][0] # 14.7636
+    time = test_traj["timestamp"]
+    
+    # initialize a figure in which all graphs will be plotted 
+    fig = plt.figure()
+    
+    # add axes 
+    # ax1 = top-down view
+    ax1 = fig.add_subplot(212)
+    ax1.set_aspect('equal', 'box')
+    ax1.set(ylim=[-10,30])
+    ax1.set_title("Bird-eye view")
+    # ax2 = velocity graph
+    ax2 = fig.add_subplot(211)
+    ax2.set_title("x-velocity over time")
+    ax2.ticklabel_format(useOffset=False)
+    # ax2.axis("off")
+    
+    # add a car
+    car_box = plt.Rectangle((x[0], y[0]), length, width)
+    
+    def init():
+        # (x, y - width) because matplotlib's rectangle starts at bottom left
+        car_box.set_xy((x[0], y[0] - width))
+        ax1.add_patch(car_box)
+        return car_box,
+    
+    car_velx = []
+    car_time = []
+    car_buffer_size = 10
+    def animate(i):
+        # animate car
+        car_box.set_xy((x[i], y[i] - width))
+        ax1.set(xlim=[x[i] + 100, x[i] - 100])
+        
+        # animate velocity
+        prev_x = x[i]
+        next_x = x[i + 1]
+        prev_time = time[i]
+        next_time = time[i + 1]
+        curr_vel = abs(next_x - prev_x) / abs(next_time - prev_time)
+        car_velx.append(curr_vel)
+        car_time.append(time[i])
+        if len(car_velx) > car_buffer_size:
+            car_velx.pop(0)
+            car_time.pop(0)
+        new_car_velx = car_velx
+        new_car_time = car_time
+        ax2.set(ylim=[curr_vel-5, curr_vel+5], xlim=[time[i] - 3, time[i] + 1])
+        ax2.plot(new_car_time, new_car_velx, scaley=True, scalex=True, color="blue")
+    
+    anim = animation.FuncAnimation(fig, animate, 
+                                    init_func=init,
+                                    frames=500,
+                                    repeat=False,
+                                    interval=20)
+    
+    # # plt.rcParams['animation.html'] = 'jshtml'
+    # anim
+    anim.save('animation.mp4', writer='ffmpeg', fps=30)
+    print("saved")
+    # plt.show()
