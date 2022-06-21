@@ -50,9 +50,22 @@ class OverheadVisualizer():
         # Document keys
         print("Keys:")
         cmd.Cmd().columnize(list(self.dbr.get_keys()), displaywidth=80)
+        
+        # Get max and min road segment
+        min_x = self.dbr.get_min("x_position")
+        max_x = self.dbr.get_max("x_position")
+        min_y = self.dbr.get_min("y_position")
+        max_y = self.dbr.get_max("y_position")
+        print("x_position range: ", min_x, "to", max_x)
+        print("y_position range: ", min_y, "to", max_y)
+        
+        # Timestamp 
+        min_time = self.dbr.get_min("first_timestamp")
+        max_time = self.dbr.get_max("last_timestamp")
+        print("timestamp range: ", min_time, "to", max_time)
     
     def visualize_road_segment(self, 
-                               start=14500, end=15000, 
+                               start=1000, end=2000, 
                                offset_frames=0, 
                                save=False,
                                frames=500): 
@@ -74,7 +87,7 @@ class OverheadVisualizer():
         fig = plt.figure()
         ax1 = fig.add_subplot(111)
         ax1.set_aspect('equal', 'box')
-        ax1.set(ylim=[-5,60])
+        ax1.set(ylim=[-200,200])
         ax1.set_title("Bird-eye view")
         ax1.set(xlim=[max(start, end), min(start, end)])
         frame_text = ax1.text(max(ax1.get_xlim()), max(ax1.get_ylim()), 'Frame 0', fontsize=12)
@@ -108,7 +121,7 @@ class OverheadVisualizer():
                 y = car_data["y_position"]
                 width = car_data["width"][0]
                 length = car_data["length"][0]
-                car_id = car_data["ID"]
+                car_id = car_data["_id"]
                 class_id = car_data["coarse_vehicle_class"]
                 
                 box = patches.Rectangle((x[i], y[i]), length, width, color=colors[class_id])
@@ -128,6 +141,9 @@ class OverheadVisualizer():
             self.anim.save('animation.mp4', writer='ffmpeg', fps=30)
         plt.show()
         print("complete")
+        
+    def get_aggregated_timestamp(self):
+        timestamp = self.dbr.collection.aggregate()
     
 if True and __name__=="__main__":
     
@@ -136,7 +152,7 @@ if True and __name__=="__main__":
         config = json.load(f)
     
     viz = OverheadVisualizer(config)    
-    # viz.get_trajectory_information()
+    viz.get_trajectory_information()
     
     viz.visualize_road_segment(save=False)
     
