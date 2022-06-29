@@ -218,28 +218,42 @@ if __name__=="__main__":
                    database_name=config["database_name"], 
                    collection_name=config["collection_name"])
     
+    num_of_doc = 100
+    
+    t_1 = time.time()
+    list(dbr.collection.find({}).limit(num_of_doc))
+    t_2 = time.time()
+    print("time taken: {}".format(t_2 - t_1))
+    
+    t_1 = time.time()
+    first_n_doc = dbr.collection.find({}).limit(num_of_doc)
+    for doc in first_n_doc:
+        print(doc["coarse_vehicle_class"])
+    t_2 = time.time()
+    print("time taken: {}".format(t_2 - t_1))
+    # print(first_5_doc[0])
     
     # three stages to querying trajectories
     # 1. add start_index and end_index to the documents
     # 2. filter to keep only documents with valid start_index & end_index
     # 3. project and slice document to get the necessary information
-    pipeline = [pipeline_add_start_end_index(1.01, 10.01),
-                pipeline_filter_by_matching(),
-                pipeline_project_and_slice()]
+    # pipeline = [pipeline_add_start_end_index(1.01, 10.01),
+    #             pipeline_filter_by_matching(),
+    #             pipeline_project_and_slice()]
     
-    tt1 = time.time()
-    traj_cursor = dbr.collection.aggregate(pipeline)
-    count = 0
+    # tt1 = time.time()
+    # traj_cursor = dbr.collection.aggregate(pipeline)
+    # count = 0
     
-    for car_data in traj_cursor:
-        start_index = car_data["start_index"]
-        end_index = car_data["end_index"]
+    # for car_data in traj_cursor:
+    #     start_index = car_data["start_index"]
+    #     end_index = car_data["end_index"]
         
-        count += 1
-    print("index: [{}, {}]".format(start_index, end_index))
-    print("length of timestamps: {}".format(len(car_data["timestamp"])))
-    print("timestamp: {}...".format(car_data["timestamp"][0:3]))
+    #     count += 1
+    # print("index: [{}, {}]".format(start_index, end_index))
+    # print("length of timestamps: {}".format(len(car_data["timestamp"])))
+    # print("timestamp: {}...".format(car_data["timestamp"][0:3]))
     
-    tt2 = time.time()
-    print("time taken: {}".format(tt2 - tt1))
-    print(count)
+    # tt2 = time.time()
+    # print("time taken: {}".format(tt2 - tt1))
+    # print(count)

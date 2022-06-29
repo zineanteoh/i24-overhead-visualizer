@@ -40,7 +40,7 @@ class Visualizer():
                        password=config["password"], 
                        database_name=config["database_name"], 
                        collection_name=config["collection_name"])
-        
+    
     def quit(self):
         cv2.destroyAllWindows()
     
@@ -124,7 +124,6 @@ class Visualizer():
         buffer_size = 100000
         
         # get all distinct tiomestamps
-        # self.get_collection_timestamps()
         min_timestamp = self.dbr.get_min("first_timestamp")
         max_timestamp = self.dbr.get_max("last_timestamp")
         fps = 30
