@@ -42,18 +42,26 @@ class OverheadVisualizer():
                                  database_name="lisatest", 
                                  collection_name="read_v1")
         self.anim = None
+        self.x_start = 15000
+        self.x_end = 14000
         
-    def visualize(self, frames=500, save=False):
-        x_start = 20000
-        x_end = 18000
+    def visualize(self, frames=20821, save=False):
         
         fig = plt.figure()
         ax1 = fig.add_subplot(111)
         ax1.set_aspect('equal', 'box')
-        ax1.set(ylim=[0, 50])
+        ax1.set(ylim=[-5, 60])
         ax1.set_title("Bird-eye view")
-        ax1.set(xlim=[x_start, x_end])
-        frame_text = ax1.text(max(ax1.get_xlim()), max(ax1.get_ylim()), 'Frame 0', fontsize=12)
+        ax1.set(xlim=[self.x_start, self.x_end])
+        
+        def on_xlims_change(event_ax):
+            # print("updated xlims: ", event_ax.get_xlim())
+            new_xlim = event_ax.get_xlim()
+            # ax1.set(xlim=new_xlim)
+            self.x_start = new_xlim[0]
+            self.x_end = new_xlim[1]
+        
+        ax1.callbacks.connect('xlim_changed', on_xlims_change)
 
         # maintains a cache of vehicle information (width, height, class)        
         # cache_vehicle[car_id] = [width, height, coarse_vehicle_class]
@@ -64,11 +72,11 @@ class OverheadVisualizer():
         def init():
             return ax1,
         
-        def animate(i, frame_text, cursor, cache_vehicle):
+        def animate(i, cursor, cache_vehicle):
             colors = ['r', 'b', 'g', 'm', 'y', 'k']
             
             #print("frame: {}".format(i))
-            frame_text.set_text("Frame {}".format(i))
+            ax1.set_title("Frame {}".format(i))
             
             doc = cursor.next()
             #print(doc["timestamp"])
@@ -86,10 +94,11 @@ class OverheadVisualizer():
                 car_y_pos = doc["y_position"][index]
                 car_class = 2
                 #print("index {} at ({},{})".format(index, car_x_pos, car_y_pos))
-                if car_x_pos >= x_end and car_x_pos <= x_start:
+                if car_x_pos <= self.x_start and car_x_pos >= self.x_end:
                     box = patches.Circle((car_x_pos, car_y_pos), 5, color=colors[car_class])
                     ax1.add_patch(box)
             return ax1,
+        
             # loop through the vehicles and plot
             # for index, car_obj in enumerate(traj_cursor):
             #     car_x_pos = doc["x_position"][index]
@@ -118,7 +127,7 @@ class OverheadVisualizer():
                                             frames=frames,
                                             repeat=False,
                                             interval=2,
-                                            fargs=(frame_text,cursor,cache_vehicle),
+                                            fargs=(cursor,cache_vehicle),
                                             blit=False)
         
         if save:
