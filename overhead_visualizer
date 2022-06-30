@@ -79,10 +79,8 @@ class OverheadVisualizer():
             ax1.set_title("Frame {}".format(i))
             
             doc = cursor.next()
-            #print(doc["timestamp"])
-            #print(len(doc["x_position"]))
-            
-            # traj_cursor = self.traj_dbr.collection.find({"_id": {"$in": doc["id"]}})
+            # print(doc["timestamp"])
+            # print(len(doc["x_position"]))
             
             # remove all car_boxes
             for box in list(ax1.patches):
@@ -93,34 +91,11 @@ class OverheadVisualizer():
                 car_x_pos = doc["x_position"][index]
                 car_y_pos = doc["y_position"][index]
                 car_class = 2
-                #print("index {} at ({},{})".format(index, car_x_pos, car_y_pos))
+                # print("index {} at ({},{})".format(index, car_x_pos, car_y_pos))
                 if car_x_pos <= self.x_start and car_x_pos >= self.x_end:
                     box = patches.Circle((car_x_pos, car_y_pos), 5, color=colors[car_class])
                     ax1.add_patch(box)
             return ax1,
-        
-            # loop through the vehicles and plot
-            # for index, car_obj in enumerate(traj_cursor):
-            #     car_x_pos = doc["x_position"][index]
-            #     car_y_pos = doc["y_position"][index]
-            #     car_length = car_obj["length"]
-            #     car_width = car_obj["width"]
-            #     car_class = car_obj["coarse_vehicle_class"]
-            #     if isinstance(car_length, list):
-            #         car_length = car_length[0]
-            #     if isinstance(car_width, list):
-            #         car_width = car_width[0]
-            #     if car_x_pos >= x_end and car_x_pos <= x_start:
-            #         box = patches.Rectangle((car_x_pos, car_y_pos), 
-            #                                 car_length, 
-            #                                 car_width, 
-            #                                 color=colors[car_class])
-            #         ax1.add_patch(box)
-                # print("id: {}, ({}, {}), {}x{}".format(index, doc["x_position"][index],
-                #                                        doc["y_position"][index],
-                #                                        car_obj["length"],
-                #                                        car_obj["width"]))
-            #return ax1,
         
         self.anim = animation.FuncAnimation(fig, func=animate,
                                             init_func=init,
@@ -128,85 +103,6 @@ class OverheadVisualizer():
                                             repeat=False,
                                             interval=2,
                                             fargs=(cursor,cache_vehicle),
-                                            blit=False)
-        
-        if save:
-            self.anim.save('animation.mp4', writer='ffmpeg', fps=30)
-        plt.show()
-        print("complete")
-            
-    
-    def visualize_road_segment(self, 
-                               start=1000, end=2000, 
-                               offset_frames=0, 
-                               save=False,
-                               frames=500): 
-        """
-        Visualizes a road segment by continuously querying the database for 
-        trajectories whose x_position lies between start and end at the 
-        timestamp_counter
-
-        Parameters
-        ----------
-        start : INT (represent start road segment in feet)
-        end : INT (represent end road segment in feet)
-        offset_frames : INT (represent how many frames to skip initially)
-        save : BOOLEAN (save visualization as video)
-        frames : INT (number of frames to visualize)
-        """
-        
-        # set up matplotlib
-        fig = plt.figure()
-        ax1 = fig.add_subplot(111)
-        ax1.set_aspect('equal', 'box')
-        ax1.set(ylim=[0,100])
-        ax1.set_title("Bird-eye view")
-        ax1.set(xlim=[max(start, end), min(start, end)])
-        frame_text = ax1.text(max(ax1.get_xlim()), max(ax1.get_ylim()), 'Frame 0', fontsize=12)
-        
-        # queries all documents where the first element of x_position array 
-        # ... lies between start and end
-        traj_data = self.timestamp_dbr.get_range("x_position.0", start - 50, end + 50)
-        
-        def init():
-            return ax1,
-        
-        # approach #1: query every frame
-        def animate(i, traj_data, frame_text):
-            frame_text.set_text('Frame {}'.format(i))
-            i = i + offset_frames
-            colors = ['r', 'b', 'g', 'm', 'y', 'k']
-            # re-query from db 
-            traj_data = self.timestamp_dbr.get_range("x_position.{}".format(i), 
-                                           start - 50, end + 50)
-            
-            # remove all car_boxes
-            for box in list(ax1.patches):
-                box.set_visible(False)
-                box.remove()
-            
-            # update all cars by 1 timestamp
-            for car_data in traj_data: 
-                # animate car
-                # print("querying car!")
-                x = car_data["x_position"]
-                y = car_data["y_position"]
-                width = car_data["width"][0]
-                length = car_data["length"][0]
-                car_id = car_data["_id"]
-                class_id = car_data["coarse_vehicle_class"]
-                
-                box = patches.Rectangle((x[i], y[i]), length, width, color=colors[class_id])
-                ax1.add_patch(box)
-                
-            return ax1,
-
-        self.anim = animation.FuncAnimation(fig, func=animate,
-                                            init_func= init,
-                                            frames=frames,
-                                            repeat=False,
-                                            interval=20,
-                                            fargs=(traj_data,frame_text,),
                                             blit=False)
         
         if save:
