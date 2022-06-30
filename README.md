@@ -10,12 +10,14 @@ config = {
   "port": 27017,
   "username": "<mongodb-username>",
   "password": "<mongodb-password>",
-  "database_name": "trajectories",
-  "collection_name": "ground_truth_two",
+  "timestamp_database": "lisatest",
+  "timestamp_collection": "transformed_trajectories",
+  "traj_database": "lisatest",
+  "traj_collection": "read_v1"
 }
 
 viz = OverheadVisualizer(config)
-viz.visualize_road_segment(frames=100, start=14500, end=15000, save=True)
+viz.visualize(frames=1000, save=True)
 ```
 
 Results: 

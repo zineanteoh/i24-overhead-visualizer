@@ -33,14 +33,14 @@ class OverheadVisualizer():
                                       port=config["port"], 
                                       username=config["username"], 
                                       password=config["password"], 
-                                      database_name="lisatest", 
-                                      collection_name="transformed_trajectories")
+                                      database_name=config["timestamp_database"], 
+                                      collection_name=config["timestamp_collection"])
         self.traj_dbr = DBReader(host=config["host"],
                                  port=config["port"],
                                  username=config["username"], 
                                  password=config["password"], 
-                                 database_name="lisatest", 
-                                 collection_name="read_v1")
+                                 database_name=config["traj_database"], 
+                                 collection_name=config["traj_collection"])
         self.anim = None
         self.x_start = 15000
         self.x_end = 14000
