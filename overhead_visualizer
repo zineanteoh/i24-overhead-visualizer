@@ -13,6 +13,7 @@ import numpy as np
 import cmd
 import json
 import os
+import pymongo
 
 class OverheadVisualizer():
     """
@@ -28,115 +29,94 @@ class OverheadVisualizer():
         ----------
         config : object
         """
-        self.dbr = DBReader(host=config["host"], 
-                       port=config["port"], 
-                       username=config["username"], 
-                       password=config["password"], 
-                       database_name=config["database_name"], 
-                       collection_name=config["collection_name"])
+        self.timestamp_dbr = DBReader(host=config["host"], 
+                                      port=config["port"], 
+                                      username=config["username"], 
+                                      password=config["password"], 
+                                      database_name="lisatest", 
+                                      collection_name="transformed_trajectories")
+        self.traj_dbr = DBReader(host=config["host"],
+                                 port=config["port"],
+                                 username=config["username"], 
+                                 password=config["password"], 
+                                 database_name="lisatest", 
+                                 collection_name="read_v1")
         self.anim = None
+        self.x_start = 15000
+        self.x_end = 14000
         
-    def get_trajectory_information(self):
-        """
-        Prints some basic trajectory information of the database collection
-        """
-        # Number of trajectories
-        print("# of trajectories:", self.dbr.count())
+    def visualize(self, frames=20821, save=False):
         
-        # Number of unique coarse_vehicle_class (quite slow)
-        # [0, 1, 2, 3, 4, 5]
-        # print(self.dbr.collection.distinct("coarse_vehicle_class"))
-        
-        # Document keys
-        print("Keys:")
-        cmd.Cmd().columnize(list(self.dbr.get_keys()), displaywidth=80)
-    
-    def visualize_road_segment(self, 
-                               start=14500, end=15000, 
-                               offset_frames=0, 
-                               save=False,
-                               frames=500): 
-        """
-        Visualizes a road segment by continuously querying the database for 
-        trajectories whose x_position lies between start and end at the 
-        timestamp_counter
-
-        Parameters
-        ----------
-        start : INT (represent start road segment in feet)
-        end : INT (represent end road segment in feet)
-        offset_frames : INT (represent how many frames to skip initially)
-        save : BOOLEAN (save visualization as video)
-        frames : INT (number of frames to visualize)
-        """
-        
-        # set up matplotlib
         fig = plt.figure()
         ax1 = fig.add_subplot(111)
         ax1.set_aspect('equal', 'box')
-        ax1.set(ylim=[-5,60])
+        ax1.set(ylim=[-5, 60])
         ax1.set_title("Bird-eye view")
-        ax1.set(xlim=[max(start, end), min(start, end)])
-        frame_text = ax1.text(max(ax1.get_xlim()), max(ax1.get_ylim()), 'Frame 0', fontsize=12)
+        ax1.set(xlim=[self.x_start, self.x_end])
         
-        # queries all documents where the first element of x_position array 
-        # ... lies between start and end
-        traj_data = self.dbr.get_range("x_position.0", start - 50, end + 50)
+        def on_xlims_change(event_ax):
+            # print("updated xlims: ", event_ax.get_xlim())
+            new_xlim = event_ax.get_xlim()
+            # ax1.set(xlim=new_xlim)
+            self.x_start = new_xlim[0]
+            self.x_end = new_xlim[1]
+        
+        ax1.callbacks.connect('xlim_changed', on_xlims_change)
+
+        # maintains a cache of vehicle information (width, height, class)        
+        # cache_vehicle[car_id] = [width, height, coarse_vehicle_class]
+        cache_vehicle = {}
+        
+        cursor = self.timestamp_dbr.collection.find().sort([("timestamp", pymongo.ASCENDING)]).limit(frames)
         
         def init():
             return ax1,
         
-        # approach #1: query every frame
-        def animate(i, traj_data, frame_text):
-            frame_text.set_text('Frame {}'.format(i))
-            i = i + offset_frames
+        def animate(i, cursor, cache_vehicle):
             colors = ['r', 'b', 'g', 'm', 'y', 'k']
-            # re-query from db 
-            traj_data = self.dbr.get_range("x_position.{}".format(i), 
-                                           start - 50, end + 50)
+            
+            #print("frame: {}".format(i))
+            ax1.set_title("Frame {}".format(i))
+            
+            doc = cursor.next()
+            # print(doc["timestamp"])
+            # print(len(doc["x_position"]))
             
             # remove all car_boxes
             for box in list(ax1.patches):
                 box.set_visible(False)
                 box.remove()
             
-            # update all cars by 1 timestamp
-            for car_data in traj_data: 
-                # animate car
-                # print("querying car!")
-                x = car_data["x_position"]
-                y = car_data["y_position"]
-                width = car_data["width"][0]
-                length = car_data["length"][0]
-                car_id = car_data["ID"]
-                class_id = car_data["coarse_vehicle_class"]
-                
-                box = patches.Rectangle((x[i], y[i]), length, width, color=colors[class_id])
-                ax1.add_patch(box)
-                
+            for index in range(len(doc["x_position"])):
+                car_x_pos = doc["x_position"][index]
+                car_y_pos = doc["y_position"][index]
+                car_class = 2
+                # print("index {} at ({},{})".format(index, car_x_pos, car_y_pos))
+                if car_x_pos <= self.x_start and car_x_pos >= self.x_end:
+                    box = patches.Circle((car_x_pos, car_y_pos), 5, color=colors[car_class])
+                    ax1.add_patch(box)
             return ax1,
-
+        
         self.anim = animation.FuncAnimation(fig, func=animate,
-                                            init_func= init,
+                                            init_func=init,
                                             frames=frames,
                                             repeat=False,
-                                            interval=20,
-                                            fargs=(traj_data,frame_text,),
+                                            interval=2,
+                                            fargs=(cursor,cache_vehicle),
                                             blit=False)
         
         if save:
             self.anim.save('animation.mp4', writer='ffmpeg', fps=30)
         plt.show()
         print("complete")
-    
+        
 if True and __name__=="__main__":
     
     os.chdir("/isis/home/teohz/Desktop/videowall")
     with open('config.json') as f:
         config = json.load(f)
     
-    viz = OverheadVisualizer(config)    
-    # viz.get_trajectory_information()
+    viz = OverheadVisualizer(config)
     
-    viz.visualize_road_segment(save=False)
+    viz.visualize()
     
