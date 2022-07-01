@@ -44,8 +44,9 @@ class OverheadVisualizer():
         self.anim = None
         self.x_start = 15000
         self.x_end = 14000
+        self.framerate = 30
         
-    def visualize(self, frames=20821, save=False):
+    def visualize(self, frames=20000, save=False):
         
         fig = plt.figure()
         ax1 = fig.add_subplot(111)
@@ -62,7 +63,7 @@ class OverheadVisualizer():
             self.x_end = new_xlim[1]
         
         ax1.callbacks.connect('xlim_changed', on_xlims_change)
-
+        
         # maintains a cache of vehicle information (width, height, class)        
         # cache_vehicle[car_id] = [width, height, coarse_vehicle_class]
         cache_vehicle = {}
@@ -73,6 +74,10 @@ class OverheadVisualizer():
             return ax1,
         
         def animate(i, cursor, cache_vehicle):
+            # animate based on framerate (1 to 30)
+            if (i % 30 > self.framerate):
+                return ax1,
+            
             colors = ['r', 'b', 'g', 'm', 'y', 'k']
             
             #print("frame: {}".format(i))
@@ -87,13 +92,24 @@ class OverheadVisualizer():
                 box.set_visible(False)
                 box.remove()
             
+            traj_cursor = self.traj_dbr.collection.find({"_id": {"$in": doc["id"]} }, 
+                                                        {"width":1, "length":1, "coarse_vehicle_class": 1})
+            
+            for index, traj in enumerate(traj_cursor):
+                # print("index: {} is {}".format(index, traj))
+                # { ObjectId('...') : [length, width, coarse_vehicle_class] }
+                cache_vehicle[traj["_id"]] = [traj["length"], traj["width"], traj["coarse_vehicle_class"]]
+            
             for index in range(len(doc["x_position"])):
                 car_x_pos = doc["x_position"][index]
                 car_y_pos = doc["y_position"][index]
-                car_class = 2
+                car_width = cache_vehicle[doc["id"][index]][0]
+                car_height = cache_vehicle[doc["id"][index]][1]
+                car_class = cache_vehicle[doc["id"][index]][2]
                 # print("index {} at ({},{})".format(index, car_x_pos, car_y_pos))
                 if car_x_pos <= self.x_start and car_x_pos >= self.x_end:
-                    box = patches.Circle((car_x_pos, car_y_pos), 5, color=colors[car_class])
+                    box = patches.Rectangle((car_x_pos, car_y_pos),
+                                            car_width, car_height, color=colors[car_class])
                     ax1.add_patch(box)
             return ax1,
         
