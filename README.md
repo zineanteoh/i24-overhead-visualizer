@@ -9,15 +9,21 @@ config = {
   "host": "<mongodb-host>",
   "port": 27017,
   "username": "<mongodb-username>",
-  "password": "<mongodb-password>",
-  "timestamp_database": "lisatest",
-  "timestamp_collection": "transformed_trajectories",
-  "traj_database": "lisatest",
-  "traj_collection": "read_v1"
+  "password": "<mongodb-password>"
 }
 
-viz = OverheadVisualizer(config)
-viz.visualize(frames=1000, save=True)
+# Collection with vehicle ID index 
+vehicle_database = "lisatest"
+vehicle_collection = "tracking_v1_reconciled_l1"
+        
+# Collection with timestamp index
+timestamp_database = "lisatest"
+timestamp_collection = "tracking_v1_reconciled_l1_transformed"
+
+viz = OverheadVisualizer(config, vehicle_database, vehicle_collection,
+                        timestamp_database, timestamp_collection,
+                        framerate=25)
+viz.visualize(verbose=True)
 ```
 
 Results: 
