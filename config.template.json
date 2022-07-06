@@ -3,8 +3,4 @@
 	"port": 27017,
 	"username": "",
 	"password": "",
-	"timestamp_database": "",
-	"timestamp_collection": "",
-	"traj_database": "",
-	"traj_collection": ""
 }

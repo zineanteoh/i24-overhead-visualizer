@@ -21,7 +21,11 @@ class OverheadVisualizer():
     information and plot a visualization of the vehicles.
     """
     
-    def __init__(self, config):
+    def __init__(self, config, 
+                 vehicle_database, vehicle_collection, 
+                 timestamp_database, timestamp_collection,
+                 x_start=2000, x_end=1000,
+                 framerate=25):
         """
         Initializes an Overhead Traffic VIsualizer object
         
@@ -33,25 +37,39 @@ class OverheadVisualizer():
                                       port=config["port"], 
                                       username=config["username"], 
                                       password=config["password"], 
-                                      database_name=config["timestamp_database"], 
-                                      collection_name=config["timestamp_collection"])
-        self.traj_dbr = DBReader(host=config["host"],
+                                      database_name=timestamp_database, 
+                                      collection_name=timestamp_collection)
+        self.vehicle_dbr = DBReader(host=config["host"],
                                  port=config["port"],
                                  username=config["username"], 
                                  password=config["password"], 
-                                 database_name=config["traj_database"], 
-                                 collection_name=config["traj_collection"])
+                                 database_name=vehicle_database, 
+                                 collection_name=vehicle_collection)
         self.anim = None
-        self.x_start = 15000
-        self.x_end = 14000
-        self.framerate = 30
+        # TODO dynamically set the most appropriate start and end
+        self.x_start = x_start
+        self.x_end = x_end
+        self.framerate = framerate
+        self.y_start = -12
+        self.y_end = 11*12
         
-    def visualize(self, frames=20000, save=False):
+    def visualize(self, frames=20000, save=False, verbose=False):
+        """
+        params:
+            frames (int): 
+                number of frames to plot. if exceeds max number 
+                of frames in database, then animation will stop
+            save (boolean): 
+                whether to save animation as a .mp4 file
+            verbose (boolean):
+                whether to print messages related to visualization
+                i.e. vehicle off the road plotted
+        """
         
         fig = plt.figure()
         ax1 = fig.add_subplot(111)
         ax1.set_aspect('equal', 'box')
-        ax1.set(ylim=[-5, 60])
+        ax1.set(ylim=[self.y_start, self.y_end])
         ax1.set_title("Bird-eye view")
         ax1.set(xlim=[self.x_start, self.x_end])
         
@@ -71,6 +89,12 @@ class OverheadVisualizer():
         cursor = self.timestamp_dbr.collection.find().sort([("timestamp", pymongo.ASCENDING)]).limit(frames)
         
         def init():
+            # plot lanes
+            for i in range(-1, 12):
+                if i in (-1, 5, 11):
+                    plt.axhline(y=i*12, linewidth=0.5, color='k')
+                else:
+                    plt.axhline(y=i*12, linewidth=0.1, color='k')
             return ax1,
         
         def animate(i, cursor, cache_vehicle):
@@ -80,37 +104,49 @@ class OverheadVisualizer():
             
             colors = ['r', 'b', 'g', 'm', 'y', 'k']
             
-            #print("frame: {}".format(i))
             ax1.set_title("Frame {}".format(i))
             
             doc = cursor.next()
-            # print(doc["timestamp"])
-            # print(len(doc["x_position"]))
             
             # remove all car_boxes
             for box in list(ax1.patches):
                 box.set_visible(False)
                 box.remove()
             
-            traj_cursor = self.traj_dbr.collection.find({"_id": {"$in": doc["id"]} }, 
+            # query for vehicle dimensions
+            traj_cursor = self.vehicle_dbr.collection.find({"_id": {"$in": doc["id"]} }, 
                                                         {"width":1, "length":1, "coarse_vehicle_class": 1})
             
+            # add vehicle dimension to cache
             for index, traj in enumerate(traj_cursor):
                 # print("index: {} is {}".format(index, traj))
                 # { ObjectId('...') : [length, width, coarse_vehicle_class] }
+                
                 cache_vehicle[traj["_id"]] = [traj["length"], traj["width"], traj["coarse_vehicle_class"]]
-            
+
+            # plot vehicles
             for index in range(len(doc["x_position"])):
                 car_x_pos = doc["x_position"][index]
                 car_y_pos = doc["y_position"][index]
-                car_width = cache_vehicle[doc["id"][index]][0]
-                car_height = cache_vehicle[doc["id"][index]][1]
+                
+                car_length = cache_vehicle[doc["id"][index]][0]
+                car_width = cache_vehicle[doc["id"][index]][1]
                 car_class = cache_vehicle[doc["id"][index]][2]
+                
+                if isinstance(car_width, list):
+                    # vehicle width and length are lists
+                    # TODO: currently just take the first item from the array
+                    car_length = car_length[0]
+                    car_width = car_width[0]
+                
                 # print("index {} at ({},{})".format(index, car_x_pos, car_y_pos))
                 if car_x_pos <= self.x_start and car_x_pos >= self.x_end:
                     box = patches.Rectangle((car_x_pos, car_y_pos),
-                                            car_width, car_height, color=colors[car_class])
+                                            car_length, car_width, color=colors[car_class])
                     ax1.add_patch(box)
+                    if verbose:
+                        if car_y_pos > self.y_end or car_y_pos < self.y_start:
+                            print("Vehicle off the road at coordinate ({}, {}) at frame={}".format(car_x_pos, car_y_pos, i))
             return ax1,
         
         self.anim = animation.FuncAnimation(fig, func=animate,
@@ -122,7 +158,7 @@ class OverheadVisualizer():
                                             blit=False)
         
         if save:
-            self.anim.save('animation.mp4', writer='ffmpeg', fps=30)
+            self.anim.save('animation.mp4', writer='ffmpeg', fps=self.framerate)
         plt.show()
         print("complete")
         
@@ -131,8 +167,45 @@ if True and __name__=="__main__":
     os.chdir("/isis/home/teohz/Desktop/videowall")
     with open('config.json') as f:
         config = json.load(f)
+        
+    test = 2
     
-    viz = OverheadVisualizer(config)
+    x_start=2000
+    x_end=1000
     
-    viz.visualize()
+    if test == 1:
+        # Collection with vehicle ID index 
+        vehicle_database = "lisatest"
+        vehicle_collection = "read_g2"
+        
+        # Collection with timestamp index
+        timestamp_database = "lisatest"
+        timestamp_collection = "write_g2"
+        
+        x_start=15000
+        x_end=14000
+        
+    elif test == 2:
+        # Collection with vehicle ID index 
+        vehicle_database = "lisatest"
+        vehicle_collection = "tracking_v1"
+        
+        # Collection with timestamp index
+        timestamp_database = "lisatest"
+        timestamp_collection = "tracking_v1_transformed"
+    elif test == 3:
+        # Collection with vehicle ID index 
+        vehicle_database = "lisatest"
+        vehicle_collection = "tracking_v1_reconciled_l1"
+        
+        # Collection with timestamp index
+        timestamp_database = "lisatest"
+        timestamp_collection = "tracking_v1_reconciled_l1_transformed"
     
+    # Plot and visualize
+    viz = OverheadVisualizer(config, 
+                             vehicle_database, vehicle_collection,
+                             timestamp_database, timestamp_collection,
+                             x_start, x_end, framerate=25)
+    
+    viz.visualize(verbose=True)
