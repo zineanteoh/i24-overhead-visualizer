@@ -85,6 +85,7 @@ class OverheadVisualizer():
         # maintains a cache of vehicle information (width, height, class)        
         # cache_vehicle[car_id] = [width, height, coarse_vehicle_class]
         cache_vehicle = {}
+        cache_colors = {}
         
         cursor = self.timestamp_dbr.collection.find().sort([("timestamp", pymongo.ASCENDING)]).limit(frames)
         
@@ -97,7 +98,7 @@ class OverheadVisualizer():
                     plt.axhline(y=i*12, linewidth=0.1, color='k')
             return ax1,
         
-        def animate(i, cursor, cache_vehicle):
+        def animate(i, cursor, cache_vehicle, cache_colors):
             # animate based on framerate (1 to 30)
             if (i % 30 > self.framerate):
                 return ax1,
@@ -123,6 +124,9 @@ class OverheadVisualizer():
                 # { ObjectId('...') : [length, width, coarse_vehicle_class] }
                 
                 cache_vehicle[traj["_id"]] = [traj["length"], traj["width"], traj["coarse_vehicle_class"]]
+            
+                if traj["_id"] not in cache_colors:
+                    cache_colors[traj["_id"]] = np.random.rand(3,)
 
             # plot vehicles
             for index in range(len(doc["x_position"])):
@@ -142,7 +146,7 @@ class OverheadVisualizer():
                 # print("index {} at ({},{})".format(index, car_x_pos, car_y_pos))
                 if car_x_pos <= self.x_start and car_x_pos >= self.x_end:
                     box = patches.Rectangle((car_x_pos, car_y_pos),
-                                            car_length, car_width, color=colors[car_class])
+                                            car_length, car_width, color=cache_colors[doc["id"][index]])
                     ax1.add_patch(box)
                     if verbose:
                         if car_y_pos > self.y_end or car_y_pos < self.y_start:
@@ -154,7 +158,7 @@ class OverheadVisualizer():
                                             frames=frames,
                                             repeat=False,
                                             interval=2,
-                                            fargs=(cursor,cache_vehicle),
+                                            fargs=(cursor,cache_vehicle,cache_colors),
                                             blit=False)
         
         if save:
@@ -167,11 +171,12 @@ if True and __name__=="__main__":
     os.chdir("/isis/home/teohz/Desktop/videowall")
     with open('config.json') as f:
         config = json.load(f)
-        
-    test = 2
+    
+    test = 1
     
     x_start=2000
     x_end=1000
+    framerate=25
     
     if test == 1:
         # Collection with vehicle ID index 
@@ -184,6 +189,8 @@ if True and __name__=="__main__":
         
         x_start=15000
         x_end=14000
+        
+        framerate=30
         
     elif test == 2:
         # Collection with vehicle ID index 
@@ -206,6 +213,6 @@ if True and __name__=="__main__":
     viz = OverheadVisualizer(config, 
                              vehicle_database, vehicle_collection,
                              timestamp_database, timestamp_collection,
-                             x_start, x_end, framerate=25)
+                             x_start, x_end, framerate)
     
-    viz.visualize(verbose=True)
+    viz.visualize(frames=500, verbose=True, save=False)
