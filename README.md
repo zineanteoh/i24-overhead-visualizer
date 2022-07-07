@@ -28,4 +28,4 @@ viz.visualize(verbose=True)
 
 Results: 
 
-![demo](https://user-images.githubusercontent.com/58854510/172712278-d5912ce8-c8ef-4b0b-a8d4-6143cb282995.gif)
+![Demo](https://user-images.githubusercontent.com/58854510/177853829-d756915c-c928-4953-bd07-2fe2993bdb39.gif)
