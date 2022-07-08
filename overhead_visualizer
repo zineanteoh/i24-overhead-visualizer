@@ -9,6 +9,7 @@ from i24_database_api.db_reader import DBReader
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import matplotlib.animation as animation
+import mplcursors
 import numpy as np
 import cmd
 import json
@@ -53,6 +54,7 @@ class OverheadVisualizer():
         self.y_start = -12
         self.y_end = 11*12
         self.paused = False
+        self.cursor = None
         
     def visualize(self, frames=20000, save=False, verbose=False):
         """
@@ -74,7 +76,7 @@ class OverheadVisualizer():
         ax1.set_title("Bird-eye view")
         ax1.set(xlim=[self.x_start, self.x_end])
         
-        # connect mouse event to toggle pause
+        # connect key press event to toggle pause
         fig.canvas.mpl_connect('key_press_event', self.toggle_pause)
         
         def on_xlims_change(event_ax):
@@ -106,8 +108,6 @@ class OverheadVisualizer():
             # animate based on framerate (1 to 30)
             if (i % 30 > self.framerate):
                 return ax1,
-            
-            colors = ['r', 'b', 'g', 'm', 'y', 'k']
             
             ax1.set_title("Frame {}".format(i))
             
@@ -150,11 +150,14 @@ class OverheadVisualizer():
                 # print("index {} at ({},{})".format(index, car_x_pos, car_y_pos))
                 if car_x_pos <= self.x_start and car_x_pos >= self.x_end:
                     box = patches.Rectangle((car_x_pos, car_y_pos),
-                                            car_length, car_width, color=cache_colors[doc["id"][index]])
+                                            car_length, car_width, 
+                                            color=cache_colors[doc["id"][index]],
+                                            label=doc["id"][index])
                     ax1.add_patch(box)
                     if verbose:
                         if car_y_pos > self.y_end or car_y_pos < self.y_start:
                             print("Vehicle off the road at coordinate ({}, {}) at frame={}".format(car_x_pos, car_y_pos, i))
+            
             return ax1,
         
         self.anim = animation.FuncAnimation(fig, func=animate,
@@ -178,9 +181,17 @@ class OverheadVisualizer():
             if self.paused:
                 self.anim.resume()
                 print("Animation Resumed")
+                self.cursor.remove()
             else:
                 self.anim.pause()
                 print("Animation Paused")
+                self.cursor = mplcursors.cursor(hover=True)
+                def on_add(sel):
+                    if self.paused and (sel.artist.get_label()[0] != "_"):
+                        print(sel.artist.get_label())
+                        sel.annotation.set_text(sel.artist.get_label())
+                # connect mouse event to hover for car ID
+                self.cursor.connect("add", lambda sel: on_add(sel))
             self.paused = not self.paused
     
 if True and __name__=="__main__":
