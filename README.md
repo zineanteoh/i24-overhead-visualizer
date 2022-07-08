@@ -2,6 +2,9 @@
 
 Overhead visualizer library for i24 motion. 
 
+Key:
+- Press <spacebar> to pause/resume animation
+
 ## Example
 
 ```python
