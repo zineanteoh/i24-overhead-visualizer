@@ -52,6 +52,7 @@ class OverheadVisualizer():
         self.framerate = framerate
         self.y_start = -12
         self.y_end = 11*12
+        self.paused = False
         
     def visualize(self, frames=20000, save=False, verbose=False):
         """
@@ -72,6 +73,9 @@ class OverheadVisualizer():
         ax1.set(ylim=[self.y_start, self.y_end])
         ax1.set_title("Bird-eye view")
         ax1.set(xlim=[self.x_start, self.x_end])
+        
+        # connect mouse event to toggle pause
+        fig.canvas.mpl_connect('key_press_event', self.toggle_pause)
         
         def on_xlims_change(event_ax):
             # print("updated xlims: ", event_ax.get_xlim())
@@ -165,14 +169,27 @@ class OverheadVisualizer():
             self.anim.save('animation.mp4', writer='ffmpeg', fps=self.framerate)
         plt.show()
         print("complete")
-        
+    
+    """
+    press spacebar to pause/resume animation
+    """
+    def toggle_pause(self, event):
+        if event.key == " ":
+            if self.paused:
+                self.anim.resume()
+                print("Animation Resumed")
+            else:
+                self.anim.pause()
+                print("Animation Paused")
+            self.paused = not self.paused
+    
 if True and __name__=="__main__":
     
     os.chdir("/isis/home/teohz/Desktop/videowall")
     with open('config.json') as f:
         config = json.load(f)
     
-    test = 1
+    test = 4
     
     x_start=2000
     x_end=1000
@@ -180,12 +197,12 @@ if True and __name__=="__main__":
     
     if test == 1:
         # Collection with vehicle ID index 
-        vehicle_database = "lisatest"
-        vehicle_collection = "read_g2"
+        vehicle_database = "zitest"
+        vehicle_collection = "ground_truth_two_v2"
         
         # Collection with timestamp index
-        timestamp_database = "lisatest"
-        timestamp_collection = "write_g2"
+        timestamp_database = "zitest"
+        timestamp_collection = "ground_truth_two_transformed_v2"
         
         x_start=15000
         x_end=14000
@@ -208,11 +225,18 @@ if True and __name__=="__main__":
         # Collection with timestamp index
         timestamp_database = "lisatest"
         timestamp_collection = "tracking_v1_reconciled_l1_transformed"
+    elif test == 4:
+        # Collection with vehicle ID index 
+        vehicle_database = "zitest"
+        vehicle_collection = "batch_5_07072022"
+        
+        # Collection with timestamp index
+        timestamp_database = "zitest"
+        timestamp_collection = "batch_5_07072022_transformed"
     
     # Plot and visualize
     viz = OverheadVisualizer(config, 
                              vehicle_database, vehicle_collection,
                              timestamp_database, timestamp_collection,
-                             x_start, x_end, framerate)
-    
+                             x_start, x_end, framerate=25)
     viz.visualize(frames=500, verbose=True, save=False)
