@@ -193,21 +193,18 @@ if True and __name__=="__main__":
     
     x_start=2000
     x_end=1000
-    framerate=25
     
     if test == 1:
         # Collection with vehicle ID index 
-        vehicle_database = "zitest"
-        vehicle_collection = "ground_truth_two_v2"
+        vehicle_database = "lisatest"
+        vehicle_collection = "ground_truth_two"
         
         # Collection with timestamp index
-        timestamp_database = "zitest"
-        timestamp_collection = "ground_truth_two_transformed_v2"
+        timestamp_database = "lisatest"
+        timestamp_collection = "ground_truth_two_transformed"
         
         x_start=15000
         x_end=14000
-        
-        framerate=30
         
     elif test == 2:
         # Collection with vehicle ID index 
@@ -239,4 +236,5 @@ if True and __name__=="__main__":
                              vehicle_database, vehicle_collection,
                              timestamp_database, timestamp_collection,
                              x_start, x_end, framerate=25)
+
     viz.visualize(frames=500, verbose=True, save=False)
