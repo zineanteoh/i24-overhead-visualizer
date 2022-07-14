@@ -200,22 +200,22 @@ if True and __name__=="__main__":
     with open('config.json') as f:
         config = json.load(f)
     
-    test = 4
+    test = 1
     
     x_start=2000
     x_end=1000
     
     if test == 1:
         # Collection with vehicle ID index 
-        vehicle_database = "lisatest"
+        vehicle_database = "zitest"
         vehicle_collection = "ground_truth_two"
         
         # Collection with timestamp index
-        timestamp_database = "lisatest"
+        timestamp_database = "zitest"
         timestamp_collection = "ground_truth_two_transformed"
         
-        x_start=15000
-        x_end=14000
+        x_start=16000
+        x_end=15000
         
     elif test == 2:
         # Collection with vehicle ID index 
