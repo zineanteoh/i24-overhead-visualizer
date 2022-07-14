@@ -55,6 +55,7 @@ class OverheadVisualizer():
         self.y_end = 11*12
         self.paused = False
         self.cursor = None
+        self.vehicle_collection = vehicle_collection
         
     def visualize(self, frames=20000, save=False, verbose=False):
         """
@@ -109,7 +110,7 @@ class OverheadVisualizer():
             if (i % 30 > self.framerate):
                 return ax1,
             
-            ax1.set_title("Frame {}".format(i))
+            ax1.set_title("{} | Frame {}".format(self.vehicle_collection, i))
             
             doc = cursor.next()
             
@@ -219,19 +220,19 @@ if True and __name__=="__main__":
         
     elif test == 2:
         # Collection with vehicle ID index 
-        vehicle_database = "lisatest"
+        vehicle_database = "zitest"
         vehicle_collection = "tracking_v1"
         
         # Collection with timestamp index
-        timestamp_database = "lisatest"
+        timestamp_database = "zitest"
         timestamp_collection = "tracking_v1_transformed"
     elif test == 3:
         # Collection with vehicle ID index 
-        vehicle_database = "lisatest"
+        vehicle_database = "zitest"
         vehicle_collection = "tracking_v1_reconciled_l1"
         
         # Collection with timestamp index
-        timestamp_database = "lisatest"
+        timestamp_database = "zitest"
         timestamp_collection = "tracking_v1_reconciled_l1_transformed"
     elif test == 4:
         # Collection with vehicle ID index 
