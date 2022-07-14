@@ -22,7 +22,7 @@ class OverheadVisualizer():
     information and plot a visualization of the vehicles.
     """
     
-    def __init__(self, config, 
+    def __init__(self, config, MODE, 
                  vehicle_database, vehicle_collection, 
                  timestamp_database, timestamp_collection,
                  x_start=2000, x_end=1000,
@@ -47,6 +47,9 @@ class OverheadVisualizer():
                                  database_name=vehicle_database, 
                                  collection_name=vehicle_collection)
         self.anim = None
+        self.MODE = MODE
+        if self.MODE != "RAW" and self.MODE != "RECONCILED":
+            raise ValueError("MODE must be either 'RAW' or 'RECONCILED'")
         # TODO dynamically set the most appropriate start and end
         self.x_start = x_start
         self.x_end = x_end
@@ -89,13 +92,6 @@ class OverheadVisualizer():
         
         ax1.callbacks.connect('xlim_changed', on_xlims_change)
         
-        # maintains a cache of vehicle information (width, height, class)        
-        # cache_vehicle[car_id] = [width, height, coarse_vehicle_class]
-        cache_vehicle = {}
-        cache_colors = {}
-        
-        cursor = self.timestamp_dbr.collection.find().sort([("timestamp", pymongo.ASCENDING)]).limit(frames)
-        
         def init():
             # plot lanes
             for i in range(-1, 12):
@@ -105,9 +101,8 @@ class OverheadVisualizer():
                     plt.axhline(y=i*12, linewidth=0.1, color='k')
             return ax1,
         
-        def animate(i, cursor, cache_vehicle, cache_colors):
-            # animate based on framerate (1 to 30)
-            if (i % 30 > self.framerate):
+        def animate_reconciled(i, cursor, cache_vehicle, cache_colors):
+            if (i % self.framerate > self.framerate):
                 return ax1,
             
             ax1.set_title("{} | Frame {}".format(self.vehicle_collection, i))
@@ -121,8 +116,8 @@ class OverheadVisualizer():
             
             # query for vehicle dimensions
             traj_cursor = self.vehicle_dbr.collection.find({"_id": {"$in": doc["id"]} }, 
-                                                        {"width":1, "length":1, "coarse_vehicle_class": 1})
-            
+                                                           {"width":1, "length":1, "coarse_vehicle_class": 1})
+        
             # add vehicle dimension to cache
             for index, traj in enumerate(traj_cursor):
                 # print("index: {} is {}".format(index, traj))
@@ -132,15 +127,14 @@ class OverheadVisualizer():
             
                 if traj["_id"] not in cache_colors:
                     cache_colors[traj["_id"]] = np.random.rand(3,)
-
+            
             # plot vehicles
-            for index in range(len(doc["x_position"])):
-                car_x_pos = doc["x_position"][index]
-                car_y_pos = doc["y_position"][index]
+            for index in range(len(doc["position"])):
+                car_x_pos = doc["position"][index][0]
+                car_y_pos = doc["position"][index][1]
                 
                 car_length = cache_vehicle[doc["id"][index]][0]
                 car_width = cache_vehicle[doc["id"][index]][1]
-                car_class = cache_vehicle[doc["id"][index]][2]
                 
                 if isinstance(car_width, list):
                     # vehicle width and length are lists
@@ -160,13 +154,65 @@ class OverheadVisualizer():
                             print("Vehicle off the road at coordinate ({}, {}) at frame={}".format(car_x_pos, car_y_pos, i))
             
             return ax1,
+    
+        def animate_raw(i, cursor, cache_colors):
+            if (i % self.framerate > self.framerate):
+                return ax1,
+            
+            ax1.set_title("{} | Frame {}".format(self.vehicle_collection, i))
+            
+            doc = cursor.next()
+            
+            # remove all car_boxes
+            for box in list(ax1.patches):
+                box.set_visible(False)
+                box.remove()
+            
+            # plot vehicles
+            for index in range(len(doc["id"])):
+                car_id = doc["id"][index]
+                if car_id not in cache_colors:
+                    cache_colors[car_id] = np.random.rand(3,)
+                car_x_pos = doc["position"][index][0]
+                car_y_pos = doc["position"][index][1]
+                
+                car_length = doc["dimensions"][index][0]
+                car_width = doc["dimensions"][index][1]
+                
+                # print("index {} at ({},{})".format(index, car_x_pos, car_y_pos))
+                if car_x_pos <= self.x_start and car_x_pos >= self.x_end:
+                    box = patches.Rectangle((car_x_pos, car_y_pos),
+                                            car_length, car_width, 
+                                            color=cache_colors[car_id],
+                                            label=car_id)
+                    ax1.add_patch(box)
+                    if verbose:
+                        if car_y_pos > self.y_end or car_y_pos < self.y_start:
+                            print("Vehicle off the road at coordinate ({}, {}) at frame={}".format(car_x_pos, car_y_pos, i))
+            
+            return ax1,
         
-        self.anim = animation.FuncAnimation(fig, func=animate,
+        
+        # maintains a cache of vehicle information (width, height, class)        
+        # cache_vehicle[car_id] = [width, height, coarse_vehicle_class]
+        cache_vehicle = {}
+        cache_colors = {}
+        
+        cursor = self.timestamp_dbr.collection.find().sort([("timestamp", pymongo.ASCENDING)]).limit(frames)
+        
+        if self.MODE == "RAW":
+            to_animate = animate_raw
+            to_args = (cursor, cache_colors,)
+        else:
+            to_animate = animate_reconciled
+            to_args = (cursor, cache_vehicle, cache_colors,)
+        
+        self.anim = animation.FuncAnimation(fig, func=to_animate,
                                             init_func=init,
                                             frames=frames,
                                             repeat=False,
                                             interval=2,
-                                            fargs=(cursor,cache_vehicle,cache_colors),
+                                            fargs=to_args,
                                             blit=False)
         
         if save:
@@ -201,10 +247,7 @@ if True and __name__=="__main__":
     with open('config.json') as f:
         config = json.load(f)
     
-    test = 1
-    
-    x_start=2000
-    x_end=1000
+    test = 4
     
     if test == 1:
         # Collection with vehicle ID index 
@@ -218,6 +261,7 @@ if True and __name__=="__main__":
         x_start=16000
         x_end=15000
         
+        MODE = "RECONCILED"
     elif test == 2:
         # Collection with vehicle ID index 
         vehicle_database = "zitest"
@@ -226,6 +270,11 @@ if True and __name__=="__main__":
         # Collection with timestamp index
         timestamp_database = "zitest"
         timestamp_collection = "tracking_v1_transformed"
+        
+        x_start=2000
+        x_end=1000
+        
+        MODE = "RAW"
     elif test == 3:
         # Collection with vehicle ID index 
         vehicle_database = "zitest"
@@ -234,6 +283,11 @@ if True and __name__=="__main__":
         # Collection with timestamp index
         timestamp_database = "zitest"
         timestamp_collection = "tracking_v1_reconciled_l1_transformed"
+        
+        x_start=2000
+        x_end=1000
+        
+        MODE = "RECONCILED"
     elif test == 4:
         # Collection with vehicle ID index 
         vehicle_database = "zitest"
@@ -242,9 +296,14 @@ if True and __name__=="__main__":
         # Collection with timestamp index
         timestamp_database = "zitest"
         timestamp_collection = "batch_5_07072022_transformed"
+        
+        x_start=2000
+        x_end=1000
+        
+        MODE = "RAW"
     
     # Plot and visualize
-    viz = OverheadVisualizer(config, 
+    viz = OverheadVisualizer(config, MODE, 
                              vehicle_database, vehicle_collection,
                              timestamp_database, timestamp_collection,
                              x_start, x_end, framerate=25)
