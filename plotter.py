@@ -13,7 +13,7 @@ TODOs
 """
 
 from i24_database_api.db_reader import DBReader
-from i24_configparse import parse_cfg
+# from i24_configparse import parse_cfg
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import numpy as np
@@ -25,6 +25,8 @@ from i24_logger.log_writer import logger, catch_critical
 import queue
 import mplcursors
 from collections import OrderedDict
+import json
+import sys
 
  
 class LRUCache:
@@ -61,36 +63,69 @@ class Plotter():
     Plot on matplotlib
     TODO:
         1. argument as vehicle database, vehicle collection, time database, time collecion
+        2. automatically decide if time-space and/or overhead should be plotted
+        3. add time range for plotting
+        4. framerate
     """
     
-    def __init__(self, config, collection_name, window_size = 10):
+    def __init__(self, config, 
+                 vehicle_database = None, vehicle_collection = None, 
+                 timestamp_database = None, timestamp_collection = None,
+                 window_size = 10, framerate = 25, x_min = 1000, x_max = 2000, duration = 60):
         """
-        Initializes an SpaceTimePlot object
+        Initializes a Plotter object
         
         Parameters
         ----------
-        config : object
+        config : object or dictionary for database access
+        vehicle_database: database name for vehicle ID indexed collection
+        vehicle_colleciton: collection name for vehicle ID indexed collection
+        timestamp_database: database name for time-indexed documents
+        timestamp_collection: collection name for time-indexed documents
+        window_size: (sec) rolling time-window size for time-space plot
+        framerate: (FPS) rate to query timestamps and to advance the animation
+        x_min/x_max: (feet) roadway range for overhead view
+        duration: (sec) duration for animation
         """
-        # TODO: clean up config
-        # combine get_collection_info with __init__
-        # add default parameters
         
-        self.dbr = DBReader(config, username = "readonly",  collection_name=collection_name)
-        if collection_name not in self.dbr.db.list_collection_names():
-            print(f"{collection_name} not in dbr")
-            raise NameError
-            
-        # add default collection_name for transformed
-        self.dbr_t = DBReader(config, username = "readonly",  database_name = parameters.transformed, collection_name=collection_name+"_transformed")
-        if collection_name+"_transformed" not in self.dbr_t.db.list_collection_names():
-            print(f"{collection_name}_transformed not in dbr_t")
-            self.overhead = False # no overhead view
+        # Check plotting mode: time-space / overhead / both
+        if vehicle_database and vehicle_collection:
+            self.timespace_view = True
+            self.dbr = DBReader(config, host = config["host"], username = config["username"], password = config["password"], port = config["port"], database_name = vehicle_database, collection_name=vehicle_collection)
+            t_min = self.dbr.get_min("first_timestamp")
+            if duration: t_max = t_min+duration 
+            else: t_max = self.dbr.get_max("last_timestamp")
+            if not x_min: x_min = min(self.dbr.get_min("starting_x"), self.dbr.get_min("ending_x"),self.dbr.get_max("starting_x"), self.dbr.get_max("ending_x"))
+            if not x_max: x_max = max(self.dbr.get_max("starting_x"), self.dbr.get_max("ending_x"),self.dbr.get_min("starting_x"), self.dbr.get_min("ending_x"))
         else:
-            self.overhead = True # intialize as a place holder
+            self.timespace_view = False # current time-space view is required
+        if timestamp_database and timestamp_collection:
+            self.overhead_view = True
+            self.dbr_t = DBReader(config, host = config["host"], username = config["username"], password = config["password"], port = config["port"], database_name = timestamp_database, collection_name=timestamp_collection)
             
+        else:
+            self.overhead_view = False
+            
+        if not (self.timespace_view or self.overhead_view):
+            raise Exception("At least one view must be specified.")
+            
+        
+        # Specify range for plotting
+        self.left = t_min - window_size/2
+        self.right = self.left + window_size
+        self.old_right = t_min
+        
+        self.x_start = x_min
+        self.x_end = x_max
+        self.y_min = -5
+        self.y_max = 200
+        self.t_min = t_min
+        self.t_max = t_max
+        
+        # Initialize animation
         self.anim = None
-        self.collection_name = collection_name
         self.window_size = window_size
+        self.framerate = framerate if framerate else 25
         
         self.lanes = [i*12 for i in range(-1,12)]   
         self.lane_name = [ "EBRS", "EB4", "EB3", "EB2", "EB1", "EBLS", "WBLS", "WB1", "WB2", "WB3", "WB4", "WBRS"]
@@ -101,58 +136,18 @@ class Plotter():
         self.annot_queue = queue.Queue()
         self.cursor = None
         
-        
-        
-        
-    @catch_critical(errors = (Exception))
-    def get_collection_info(self):
-        """
-        To set the bounds on query and on visualization
-        Returns
-        -------
-        None.
 
-        """
-        dbr = self.dbr
-        collection_info = {
-            "count": dbr.count(),
-            "tmin": dbr.get_min("first_timestamp"),
-            # "tmax": dbr.get_max("last_timestamp"),
-            "tmax": dbr.get_min("first_timestamp") + 60,
-            # "xmin": min(dbr.get_min("starting_x"), dbr.get_min("ending_x"),dbr.get_max("starting_x"), dbr.get_max("ending_x")),
-            "xmin": -100,
-            "xmax": max(dbr.get_max("starting_x"), dbr.get_max("ending_x"),dbr.get_min("starting_x"), dbr.get_min("ending_x")),
-            "ymin": -5,
-            "ymax": 200
-            }
-        
-        self.left = collection_info["tmin"] - self.window_size/2
-        self.right = self.left + self.window_size
-        self.old_right = collection_info["tmin"]
-        self.collection_info = collection_info
-        
-        self.x_start = self.collection_info["xmin"]
-        self.x_end = self.collection_info["xmax"]
-        
+    
         
     @catch_critical(errors = (Exception))
-    def animate(self, tmin=None, tmax=None, increment=0.3, frames=100, save = False):
+    def animate(self, save = False):
         """
         Advance time window by delta second, update left and right pointer, and cache
         """     
-        # Initialize ax
-        self.get_collection_info()
-        
-        if not tmin:
-            tmin = self.collection_info["tmin"]
-        if not tmax:
-            tmax = self.collection_info["tmax"]
-        # steps = np.arange(tmin, tmax, increment, dtype=float)
-        
         # set figures: two rows. Top: east, bottom: west. 4 lanes in each direction
-        if self.overhead:
+        if self.overhead_view and self.timespace_view:
             fig, axs = plt.subplots(3,6,figsize=(34,8))
-        else:
+        elif self.timespace_view:
             fig, axs = plt.subplots(2,6,figsize=(30,8))
         
         # TODO: make size parameters
@@ -161,7 +156,7 @@ class Plotter():
         
         
         # OVERHEAD VIEW SETUP
-        if self.overhead:
+        if self.overhead_view:
             ax_o = plt.subplot(313) # overhead view
             ax_o.set_aspect('equal', 'box')
             ax_o.set(ylim=[self.lanes[0], self.lanes[-1]])
@@ -176,17 +171,16 @@ class Plotter():
                 self.x_start = new_xlim[0]
                 self.x_end = new_xlim[1]
             ax_o.callbacks.connect('xlim_changed', on_xlims_change)
-            
+       
+            self.time_cursor = self.dbr_t.collection.find().sort([("timestamp", 1)]).limit(0) # no limit
+            plt.gcf().autofmt_xdate()
         
         # TIME-SPACE VIEW SETUP
-        self.time_cursor = self.dbr_t.collection.find().sort([("timestamp", 1)]).limit(0) # no limit
-        plt.gcf().autofmt_xdate()
-        
         for i in self.lane_idx:
             ax = axs[self.lane_ax[i][0], self.lane_ax[i][1]]
             ax.set_aspect("auto")
-            ax.set(ylim=[self.collection_info["xmin"], self.collection_info["xmax"]])
-            ax.set(xlim=[self.collection_info["tmin"]-self.window_size/2, self.collection_info["tmin"]+self.window_size/2])
+            ax.set(ylim=[self.x_start, self.x_end])
+            ax.set(xlim=[self.left, self.right])
             ax.set_title(self.lane_name[i])
             ax.yaxis.set_visible(False)
             if i <= 5: # bottom
@@ -203,7 +197,7 @@ class Plotter():
         
         @catch_critical(errors = (Exception))
         def init():
-            if self.overhead:
+            if self.overhead_view:
                 # plot lanes on overhead view
                 for i in range(-1, 12):
                     if i in (-1, 5, 11):
@@ -222,7 +216,12 @@ class Plotter():
             delta : increment in time (sec)
                 DESCRIPTION.
             """
-            if self.overhead:
+            # Stop criteria
+            if (self.left + self.right)/2 >= self.t_max:
+                print("Reach the end of time. Exit.")
+                raise StopIteration
+            
+            if self.overhead_view:
                 # --------------- OVERHEAD VIEW ---------------------
                 doc = self.time_cursor.next()
                 curr_time = doc["timestamp"]
@@ -264,11 +263,7 @@ class Plotter():
                     car_y_pos = doc["position"][index][1]
     
                     car_length, car_width, _ = cache_vehicle.get(doc["id"][index])
-                
-                    
-                    # print("index {} at ({},{})".format(index, car_x_pos, car_y_pos))
-                    # if car_x_pos <= self.x_start and car_x_pos >= self.x_end:
-                    # print(cache_colors.get(doc["id"][index]))
+
                     box = patches.Rectangle((car_x_pos, car_y_pos),
                                             car_length, car_width, 
                                             color=cache_colors.get(doc["id"][index]),
@@ -287,7 +282,7 @@ class Plotter():
                 ax = axs[self.lane_ax[i][0], self.lane_ax[i][1]]
                 ax.set(xlim=[self.left, self.right])
                 # add vertical line
-                if self.overhead:
+                if self.overhead_view:
                     vl = ax.axvline(x=curr_time, c='k', linewidth='0.5', linestyle='--')
                     self.vl_queue.put(vl)
                     
@@ -307,13 +302,13 @@ class Plotter():
                                             query_sort = [("last_timestamp", "DSC")])
             
             # roll time window forward
-            if self.overhead:
+            if self.overhead_view:
                 self.left = doc['timestamp'] - self.window_size/2
                 self.old_right = self.right
                 self.right = doc['timestamp'] + self.window_size/2
             else:
                 self.old_right = self.right
-                self.right += increment
+                self.right += 1/framerate
                 self.left = self.right - self.window_size
             
             # remove trajectories whose last_timestamp is below left
@@ -351,9 +346,9 @@ class Plotter():
         frame_text = None
         self.anim = animation.FuncAnimation(fig, func=update_cache,
                                             init_func= init,
-                                            frames=frames,
+                                            frames=int(self.t_max-self.t_min)*self.framerate,
                                             repeat=False,
-                                            interval=increment * 1000, # in ms
+                                            interval=1/self.framerate * 1000, # in ms
                                             fargs=( frame_text), # specify time increment in sec to update query
                                             blit=False)
         self.paused = False
@@ -361,10 +356,15 @@ class Plotter():
 
         
         if save:
-            self.anim.save('{}.mp4'.format(self.collection_name), writer='ffmpeg', fps=int(1/increment))
-          
-        if self.overhead:
-            fig.tight_layout()
+            file_name = "anim_" + self.dbr.collection._Collection__name
+            if self.timespace_view:
+                file_name += "_timespace"
+            if self.overhead_view:
+                file_name += "_overhead"
+            # self.anim.save('{}.mp4'.format(file_name), writer='ffmpeg', fps=self.framerate)
+            self.anim.save('{}.gif'.format(file_name), writer='imagemagick', fps=self.framerate)
+     
+        fig.tight_layout()
         plt.show()
         print("complete")
         
@@ -397,20 +397,28 @@ class Plotter():
                 self.cursor.connect("add", lambda sel: on_add(sel))
             self.paused = not self.paused
 
-        
-        
+    
     
 if True and __name__=="__main__":
     
+
+    with open('config.json') as f:
+        parameters = json.load(f)
     
-    # config_path = os.path.join(os.getcwd(),"../config")
-    # os.environ["user_config_directory"] = config_path
-    # os.environ["my_config_section"] = "TEST"
-    parameters = parse_cfg("test_config_section", cfg_name = "test_param.config")
-    parameters.transformed = "transformed"
+    vehicle_database = "trajectories"
+    vehicle_collection = "batch_reconciled"
+    timestamp_database = "transformed"
+    timestamp_collection = "batch_reconciled_transformed"
+    window_size = 10
+    framerate = 25
+    x_min = 0
+    x_max = 2000
+    duration = 7
     
     # batch_5_07072022, batch_reconciled, 
-    p = Plotter(parameters, "batch_reconciled", window_size = 5)
-    p.animate(increment=0.05,  frames = 2000, save=False)
+    p = Plotter(parameters, vehicle_database=vehicle_database, vehicle_collection=vehicle_collection,
+                timestamp_database=timestamp_database, timestamp_collection=timestamp_collection,
+                window_size = window_size, framerate = framerate, x_min = x_min, x_max=x_max, duration=duration)
+    p.animate(save=True)
     
     
