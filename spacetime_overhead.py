@@ -32,6 +32,7 @@ import sys
 class LRUCache:
     """
     A least-recently-used cache with integer capacity
+    To roll out of the cache for vehicle color and dimensions
     get(): return the key-value in cache if exists, otherwise return -1
     put(): (no update) 
     """
@@ -95,8 +96,8 @@ class Plotter():
             t_min = self.dbr.get_min("first_timestamp")
             if duration: t_max = t_min+duration 
             else: t_max = self.dbr.get_max("last_timestamp")
-            if not x_min: x_min = min(self.dbr.get_min("starting_x"), self.dbr.get_min("ending_x"),self.dbr.get_max("starting_x"), self.dbr.get_max("ending_x"))
-            if not x_max: x_max = max(self.dbr.get_max("starting_x"), self.dbr.get_max("ending_x"),self.dbr.get_min("starting_x"), self.dbr.get_min("ending_x"))
+            if x_min is None: x_min = min(self.dbr.get_min("starting_x"), self.dbr.get_min("ending_x"),self.dbr.get_max("starting_x"), self.dbr.get_max("ending_x"))
+            if x_max is None: x_max = max(self.dbr.get_max("starting_x"), self.dbr.get_max("ending_x"),self.dbr.get_min("starting_x"), self.dbr.get_min("ending_x"))
         else:
             self.timespace_view = False # current time-space view is required
         if timestamp_database and timestamp_collection:
@@ -117,8 +118,6 @@ class Plotter():
         
         self.x_start = x_min
         self.x_end = x_max
-        self.y_min = -5
-        self.y_max = 200
         self.t_min = t_min
         self.t_max = t_max
         
@@ -361,11 +360,11 @@ class Plotter():
                 file_name += "_timespace"
             if self.overhead_view:
                 file_name += "_overhead"
-            # self.anim.save('{}.mp4'.format(file_name), writer='ffmpeg', fps=self.framerate)
-            self.anim.save('{}.gif'.format(file_name), writer='imagemagick', fps=self.framerate)
-     
-        fig.tight_layout()
-        plt.show()
+            self.anim.save('{}.mp4'.format(file_name), writer='ffmpeg', fps=self.framerate)
+            # self.anim.save('{}.gif'.format(file_name), writer='imagemagick', fps=self.framerate)
+        else:
+            fig.tight_layout()
+            plt.show()
         print("complete")
         
 
@@ -406,19 +405,19 @@ if True and __name__=="__main__":
         parameters = json.load(f)
     
     vehicle_database = "trajectories"
-    vehicle_collection = "batch_reconciled"
+    vehicle_collection = "21_07_2022_gt1_alpha"
     timestamp_database = "transformed"
-    timestamp_collection = "batch_reconciled_transformed"
+    # timestamp_collection = "21_07_2022_gt1_alpha_transformed"
     window_size = 10
     framerate = 25
-    x_min = 0
-    x_max = 2000
-    duration = 7
+    x_min = None
+    x_max = None
+    duration = None
     
     # batch_5_07072022, batch_reconciled, 
     p = Plotter(parameters, vehicle_database=vehicle_database, vehicle_collection=vehicle_collection,
-                timestamp_database=timestamp_database, timestamp_collection=timestamp_collection,
+                timestamp_database=timestamp_database, timestamp_collection=vehicle_collection,
                 window_size = window_size, framerate = framerate, x_min = x_min, x_max=x_max, duration=duration)
-    p.animate(save=True)
+    p.animate(save=False)
     
     
