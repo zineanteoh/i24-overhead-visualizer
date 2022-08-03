@@ -246,7 +246,7 @@ class OverheadCompare():
 
                 box = patches.Rectangle((car_x_pos, car_y_pos),
                                         car_length, car_width, 
-                                        color=[0.9,0.9,0.9])
+                                        color=[0.8,0.8,0.8])
                 for i in range(num):
                     axs[i].add_patch(copy(box)) 
                     
