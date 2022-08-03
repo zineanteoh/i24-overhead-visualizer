@@ -12,16 +12,14 @@ from i24_database_api.db_reader import DBReader
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import numpy as np
-import os
 import matplotlib.animation as animation
-import matplotlib.ticker as mticker
 from datetime import datetime
 from i24_logger.log_writer import logger, catch_critical
 import queue
 import mplcursors
 from collections import OrderedDict
 import json
-import sys
+from copy import copy
 
  
 class LRUCache:
@@ -58,8 +56,8 @@ class OverheadCompare():
     """
     
     def __init__(self, config, vehicle_database = None,
-                 timestamp_database = None, collection1 = None, collection2 = None,
-                 framerate = 25, x_min = 0, x_max = 1500, duration = 60):
+                 timestamp_database = None, collections = None,
+                 framerate = 25, x_min = 0, x_max = 1500, offset = None ,duration = 60):
         """
         Initializes a Plotter object
         
@@ -74,20 +72,27 @@ class OverheadCompare():
         x_min/x_max: (feet) roadway range for overhead view
         duration: (sec) duration for animation
         """
+        list_dbr = [] # time indexed
+        list_veh = [] # vehicle indexed
+
+        # first collection is GT
+        for collection in collections:
+            dbr = DBReader(config, host = config["host"], username = config["username"], password = config["password"], port = config["port"], database_name = timestamp_database, collection_name=collection)
+            veh = DBReader(config, host = config["host"], username = config["username"], password = config["password"], port = config["port"], database_name = vehicle_database, collection_name=collection)
+            dbr.create_index("timestamp")
+            list_dbr.append(dbr)
+            list_veh.append(veh)
         
-        self.dbr1 = DBReader(config, host = config["host"], username = config["username"], password = config["password"], port = config["port"], database_name = timestamp_database, collection_name=collection1)
-        self.dbr2 = DBReader(config, host = config["host"], username = config["username"], password = config["password"], port = config["port"], database_name = timestamp_database, collection_name=collection2)   
-        # corresponding vehicle ID collection
-        self.veh1 = DBReader(config, host = config["host"], username = config["username"], password = config["password"], port = config["port"], database_name = vehicle_database, collection_name=collection1)
-        self.veh2 = DBReader(config, host = config["host"], username = config["username"], password = config["password"], port = config["port"], database_name = vehicle_database, collection_name=collection2)
-        
-        self.dbr1.create_index("timestamp")
-        self.dbr2.create_index("timestamp")
+        if len(list_dbr) == 0:
+            raise Exception("at least one collection must be specified.")
         
         # get plotting ranges
-        t_min = max(self.dbr1.get_min("timestamp"),self.dbr2.get_min("timestamp"))
+        t_min = max([dbr.get_min("timestamp") for dbr in list_dbr])
+       
+        if offset:
+            t_min += offset
         if duration: t_max = t_min+duration 
-        else: t_max = min(self.dbr1.get_max("timestamp"),self.dbr2.get_max("timestamp"))
+        else: t_max = min([dbr.get_max("timestamp") for dbr in list_dbr])
         
         self.x_start = x_min
         self.x_end = x_max
@@ -107,20 +112,24 @@ class OverheadCompare():
         self.annot_queue = queue.Queue()
         self.cursor = None
         
+        self.list_dbr =  list_dbr
+        self.list_veh = list_veh
+        
 
     
         
     @catch_critical(errors = (Exception))
-    def animate(self, save = False):
+    def animate(self, save = False, extra=""):
         """
         Advance time window by delta second, update left and right pointer, and cache
         """     
         # set figures: two rows. Top: dbr1 (ax_o), bottom: dbr2 (ax_o2). 4 lanes in each direction
-        fig, axs = plt.subplots(2,6,figsize=(20,8))
+        num = len(self.list_dbr)-1
+        fig, axs = plt.subplots(num,1,figsize=(16,3*num))
              
         # TODO: make size parameters
-        cache_vehicle = LRUCache(100)
-        cache_colors = LRUCache(100)
+        cache_vehicle = LRUCache(200*num)
+        cache_colors = LRUCache(200*num)
         
         def on_xlims_change(event_ax):
             # print("updated xlims: ", event_ax.get_xlim())
@@ -130,27 +139,23 @@ class OverheadCompare():
             self.x_end = new_xlim[1]
             
         # OVERHEAD VIEW SETUP
-        ax_o = plt.subplot(211) # overhead view
-        ax_o2 = plt.subplot(212) # overhead view
-        ax_o.set_title(self.dbr1.collection._Collection__name)
-        ax_o2.set_title(self.dbr2.collection._Collection__name)
-        
-        for ax in [ax_o, ax_o2]:
+        for i,ax in enumerate(axs):
+            ax.set_title(self.list_veh[i+1].collection._Collection__name)
             ax.set_aspect('equal', 'box')
             ax.set(ylim=[self.lanes[0], self.lanes[-1]])
             ax.set(xlim=[self.x_start, self.x_end])
             ax.set_ylabel("EB    WB")
             ax.set_xlabel("Distance in feet")
             ax.callbacks.connect('xlim_changed', on_xlims_change)
-
+      
         
-        self.time_cursor = self.dbr1.get_range("timestamp", self.t_min, self.t_max)
+        self.time_cursor = self.list_dbr[0].get_range("timestamp", self.t_min, self.t_max)
         plt.gcf().autofmt_xdate()
         
         
         @catch_critical(errors = (Exception))
         def init():
-            for ax in [ax_o, ax_o2]:
+            for ax in axs:
                 # plot lanes on overhead view
                 for i in range(-1, 12):
                     if i in (-1, 5, 11):
@@ -170,91 +175,94 @@ class OverheadCompare():
                 DESCRIPTION.
             """
             # Stop criteria
-            doc1 = self.time_cursor.next()
-            curr_time = doc1["timestamp"]
-            doc2 = self.dbr2.find_one("timestamp", curr_time)
-            if not doc2:
-                # return axs
-                doc2 = {"id": [], "position":[], "dimensions":[]}
-
+            doc0 = self.time_cursor.next()
+            curr_time = doc0["timestamp"]
             if curr_time >= self.t_max:
                 print("Reach the end of time. Exit.")
                 raise StopIteration
-                
-            time_text = datetime.utcfromtimestamp(int(curr_time)).strftime('%m/%d/%Y, %H:%M:%S')
+            docs = []
+            for dbr in self.list_dbr[1:]:
+                doc = dbr.find_one("timestamp", curr_time)
+                if not doc:
+                    doc = {"id": [], "position":[], "dimensions":[]}
+                docs.append(doc)
             
+            time_text = datetime.utcfromtimestamp(int(curr_time)).strftime('%m/%d/%Y, %H:%M:%S')
             plt.suptitle(time_text, fontsize = 20)
             
             # remove all car_boxes and verticle lines
-            for box in list(ax_o.patches) + list(ax_o2.patches):
-                box.set_visible(False)
-                box.remove()
-            
+            for ax in axs:
+                for box in list(ax.patches):
+                    box.set_visible(False)
+                    box.remove()
             while not self.annot_queue.empty():
                 self.annot_queue.get(block=False).remove()
                 
-            # Add vehicle ids in cache_colors             
-            for veh_id in doc1['id'] + doc2['id']:
-                cache_colors.put(veh_id, np.random.rand(3,))
+            # Add vehicle ids in cache_colors 
+            for doc in docs:   
+                for veh_id in doc['id']:
+                    cache_colors.put(veh_id, np.random.rand(3,)/2)
                 
-            # query for vehicle dimensions if not in doc
-            if "dimensions" not in doc1:
-                # find in the corresponding vehicle-id database
-                traj_cursor1 = self.veh1.collection.find({"_id": {"$in": doc1["id"]} }, 
-                                                                {"width":1, "length":1, "coarse_vehicle_class": 1})
-                # add vehicle dimension to cache
-                for index, traj in enumerate(traj_cursor1):
-                    # print("index: {} is {}".format(index, traj))
-                    # { ObjectId('...') : [length, width, coarse_vehicle_class] }
-                    cache_vehicle.put(traj["_id"], [traj["length"], traj["width"], traj["coarse_vehicle_class"]])
-            else:
-                for index, veh_id in enumerate(doc1['id']):
-                    cache_vehicle.put(veh_id, doc1['dimensions'][index])     
-                
-            if "dimensions" not in doc2:
-                traj_cursor2 = self.veh2.collection.find({"_id": {"$in": doc2["id"]} }, 
-                                                                {"width":1, "length":1, "coarse_vehicle_class": 1}) 
-                # add vehicle dimension to cache
-                for index, traj in enumerate(traj_cursor2):
-                    cache_vehicle.put(traj["_id"], [traj["length"], traj["width"], traj["coarse_vehicle_class"]])
-            else:
-                for index, veh_id in enumerate(doc2['id']):
-                    cache_vehicle.put(veh_id, doc2['dimensions'][index])          
+            # GT
+            traj_cursor = self.list_veh[0].collection.find({"_id": {"$in": doc0["id"]} }, 
+                                       {"width":1, "length":1, "coarse_vehicle_class": 1})
+            # add vehicle dimension to cache
+            for traj in traj_cursor:
+                # print("** in curosr")
+                cache_vehicle.put(traj["_id"], [traj["length"], traj["width"], traj["coarse_vehicle_class"]])
+                    
+            
+            # query for vehicle dimensions if not in doc (GT or reconciled)
+            for i,doc in enumerate(docs):
+                if "dimensions" not in doc:
+                    traj_cursor = self.list_veh[i+1].collection.find({"_id": {"$in": doc["id"]} }, 
+                                               {"width":1, "length":1, "coarse_vehicle_class": 1})
+                    # add vehicle dimension to cache
+                    for traj in traj_cursor:
+                        # print("** in curosr")
+                        # print("*put ", i, traj["_id"])
+                        cache_vehicle.put(traj["_id"], [traj["length"], traj["width"], traj["coarse_vehicle_class"]])
+                else:
+                    for index, veh_id in enumerate(doc['id']):
+                        # print("**put ", i, veh_id)
+                        cache_vehicle.put(veh_id, doc['dimensions'][index])      
+             
+            # plot GT
+            for index in range(len(doc0["position"])):
+                car_x_pos = doc0["position"][index][0]
+                car_y_pos = doc0["position"][index][1]
+
+                # print("** ",cache_vehicle.get(doc0["id"][index]))
+                # print(len(cache_vehicle.cache))
+                # print(len(cache_colors.cache))
+                car_length, car_width, _ = cache_vehicle.get(doc0["id"][index])
+
+                box = patches.Rectangle((car_x_pos, car_y_pos),
+                                        car_length, car_width, 
+                                        color=[0.9,0.9,0.9])
+                for i in range(num):
+                    axs[i].add_patch(copy(box)) 
+                    
                     
             # plot vehicles
-            for index in range(len(doc1["position"])):
-                car_x_pos = doc1["position"][index][0]
-                car_y_pos = doc1["position"][index][1]
+            for i, doc in enumerate(docs):
+                for index in range(len(doc["position"])):
+                    car_x_pos = doc["position"][index][0]
+                    car_y_pos = doc["position"][index][1]
 
-                car_length, car_width, _ = cache_vehicle.get(doc1["id"][index])
+                    # print("** ",cache_vehicle.get(doc["id"][index]))
+                    # print(i,doc["id"][index])
+                    car_length, car_width, _ = cache_vehicle.get(doc["id"][index])
 
-                box = patches.Rectangle((car_x_pos, car_y_pos),
-                                        car_length, car_width, 
-                                        color=cache_colors.get(doc1["id"][index]),
-                                        label=doc1["id"][index])
-                ax_o.add_patch(box)   
-                # add annotation
-                annot = ax_o.annotate(doc1['_id'], xy=(car_x_pos,car_y_pos))
-                annot.set_visible(False)
-                self.annot_queue.put(annot)
-                
-            # plot vehicles
-            for index in range(len(doc2["position"])):
-                car_x_pos = doc2["position"][index][0]
-                car_y_pos = doc2["position"][index][1]
-
-                car_length, car_width, _ = cache_vehicle.get(doc2["id"][index])
-
-                box = patches.Rectangle((car_x_pos, car_y_pos),
-                                        car_length, car_width, 
-                                        color=cache_colors.get(doc2["id"][index]),
-                                        label=doc2["id"][index])
-                ax_o2.add_patch(box)   
-                # add annotation
-                annot = ax_o2.annotate(doc2['_id'], xy=(car_x_pos,car_y_pos))
-                annot.set_visible(False)
-                self.annot_queue.put(annot)
-            
+                    box = patches.Rectangle((car_x_pos, car_y_pos),
+                                            car_length, car_width, 
+                                            color=cache_colors.get(doc["id"][index]),
+                                            label=doc["id"][index])
+                    axs[i].add_patch(box)   
+                    # add annotation
+                    annot = axs[i].annotate(doc['_id'], xy=(car_x_pos,car_y_pos))
+                    annot.set_visible(False)
+                    self.annot_queue.put(annot)
 
             return axs
         
@@ -266,13 +274,15 @@ class OverheadCompare():
                                             repeat=False,
                                             interval=1/self.framerate * 1000, # in ms
                                             fargs=( frame_text), # specify time increment in sec to update query
-                                            blit=False)
+                                            blit=False,
+                                            cache_frame_data = False,
+                                            save_count = 1)
         self.paused = False
         fig.canvas.mpl_connect('key_press_event', self.toggle_pause)
 
         
         if save:
-            file_name = "anim_overhead_compare_" + self.dbr1.collection._Collection__name + "_vs_" + self.dbr2.collection._Collection__name
+            file_name = "anim_overheadcomparison_" + self.list_veh[1].collection._Collection__name + "_"+extra
             self.anim.save('{}.mp4'.format(file_name), writer='ffmpeg', fps=self.framerate)
             # self.anim.save('{}.gif'.format(file_name), writer='imagemagick', fps=self.framerate)
         else:
@@ -291,11 +301,11 @@ class OverheadCompare():
         if event.key == " ":
             if self.paused:
                 self.anim.resume()
-                print("Animation Resumed")
+                # print("Animation Resumed")
                 self.cursor.remove()
             else:
                 self.anim.pause()
-                print("Animation Paused")
+                # print("Animation Paused")
                 printed = set()
                 self.cursor = mplcursors.cursor(hover=True)
                 def on_add(sel):
@@ -310,6 +320,7 @@ class OverheadCompare():
             self.paused = not self.paused
 
     
+
     
 if True and __name__=="__main__":
     
@@ -319,17 +330,19 @@ if True and __name__=="__main__":
     
     vehicle_database = "trajectories"
     timestamp_database = "transformed"
-    collection1 = "groundtruth_scene_1"
-    collection2 = "21_07_2022_gt1_alpha"
+    collection0 = "groundtruth_scene_1"
+    collection1 = "paradoxical_wallaby--RAW_GT1" # collection name is the same in both databases
+    collection2 = "paradoxical_wallaby--RAW_GT1__boggles"
+    # collection2 = None
     framerate = 25
     x_min = 0
     x_max = 1500
+    offset = 0
     duration = None
-    
-    # batch_5_07072022, batch_reconciled, 
+
     p = OverheadCompare(parameters, vehicle_database = vehicle_database, timestamp_database=timestamp_database, 
-                collection1=collection1, collection2=collection2,
-                framerate = framerate, x_min = x_min, x_max=x_max, duration=duration)
-    p.animate(save=False)
+                collections = [collection0, collection1,collection2,collection2],
+                framerate = framerate, x_min = x_min, x_max=x_max, offset = offset, duration=duration)
+    p.animate(save=False, extra="")
     
     

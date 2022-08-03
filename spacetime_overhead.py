@@ -13,6 +13,7 @@ TODOs
 """
 
 from i24_database_api.db_reader import DBReader
+from i24_database_api import transform
 # from i24_configparse import parse_cfg
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -72,7 +73,7 @@ class Plotter():
     def __init__(self, config, 
                  vehicle_database = None, vehicle_collection = None, 
                  timestamp_database = None, timestamp_collection = None,
-                 window_size = 10, framerate = 25, x_min = 1000, x_max = 2000, duration = 60):
+                 window_size = 10, framerate = 25, x_min = 1000, x_max = 2000, duration = 60, transform_data=False):
         """
         Initializes a Plotter object
         
@@ -90,6 +91,20 @@ class Plotter():
         """
         
         # Check plotting mode: time-space / overhead / both
+        if timestamp_database and timestamp_collection:
+            self.overhead_view = True
+            self.dbr_t = DBReader(config, host = config["host"], username = config["username"], password = config["password"], port = config["port"], database_name = timestamp_database, collection_name=timestamp_collection)
+            if transform_data:
+                print("Transform to time-indexed collection first")
+                transform(host=config["host"], 
+                          port=config["port"], 
+                          username="i24-data", 
+                          password=config["password"], 
+                          read_database_name=vehicle_database, 
+                          read_collection_name=timestamp_collection)
+                    
+        else:
+            self.overhead_view = False
         if vehicle_database and vehicle_collection:
             self.timespace_view = True
             self.dbr = DBReader(config, host = config["host"], username = config["username"], password = config["password"], port = config["port"], database_name = vehicle_database, collection_name=vehicle_collection)
@@ -100,12 +115,7 @@ class Plotter():
             if x_max is None: x_max = max(self.dbr.get_max("starting_x"), self.dbr.get_max("ending_x"),self.dbr.get_min("starting_x"), self.dbr.get_min("ending_x"))
         else:
             self.timespace_view = False # current time-space view is required
-        if timestamp_database and timestamp_collection:
-            self.overhead_view = True
-            self.dbr_t = DBReader(config, host = config["host"], username = config["username"], password = config["password"], port = config["port"], database_name = timestamp_database, collection_name=timestamp_collection)
-            
-        else:
-            self.overhead_view = False
+        
             
         if not (self.timespace_view or self.overhead_view):
             raise Exception("At least one view must be specified.")
@@ -150,8 +160,8 @@ class Plotter():
             fig, axs = plt.subplots(2,6,figsize=(30,8))
         
         # TODO: make size parameters
-        cache_vehicle = LRUCache(100)
-        cache_colors = LRUCache(100)
+        cache_vehicle = LRUCache(200)
+        cache_colors = LRUCache(200)
         
         
         # OVERHEAD VIEW SETUP
@@ -378,11 +388,11 @@ class Plotter():
         if event.key == " ":
             if self.paused:
                 self.anim.resume()
-                print("Animation Resumed")
+                # print("Animation Resumed")
                 self.cursor.remove()
             else:
                 self.anim.pause()
-                print("Animation Paused")
+                # print("Animation Paused")
                 printed = set()
                 self.cursor = mplcursors.cursor(hover=True)
                 def on_add(sel):
@@ -405,19 +415,21 @@ if True and __name__=="__main__":
         parameters = json.load(f)
     
     vehicle_database = "trajectories"
-    vehicle_collection = "21_07_2022_gt1_alpha"
+    vehicle_collection = "paradoxical_wallaby--RAW_GT1__boggles"
     timestamp_database = "transformed"
-    # timestamp_collection = "21_07_2022_gt1_alpha_transformed"
+
     window_size = 10
     framerate = 25
     x_min = None
     x_max = None
     duration = None
+    transform_data = True
     
     # batch_5_07072022, batch_reconciled, 
     p = Plotter(parameters, vehicle_database=vehicle_database, vehicle_collection=vehicle_collection,
                 timestamp_database=timestamp_database, timestamp_collection=vehicle_collection,
-                window_size = window_size, framerate = framerate, x_min = x_min, x_max=x_max, duration=duration)
-    p.animate(save=False)
+                window_size = window_size, framerate = framerate, x_min = x_min, x_max=x_max, duration=duration, 
+                transform_data=transform_data)
+    # p.animate(save=False)
     
     
