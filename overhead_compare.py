@@ -7,7 +7,7 @@ Created on Wed Jun 22 10:22:38 2022
 
 """
 
-from i24_database_api.db_reader import DBReader
+from i24_database_api import DBClient
 # from i24_configparse import parse_cfg
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -55,8 +55,7 @@ class OverheadCompare():
     compare the overhead views of two collecctions
     """
     
-    def __init__(self, config, vehicle_database = None,
-                 timestamp_database = None, collections = None,
+    def __init__(self, config, collections = None,
                  framerate = 25, x_min = 0, x_max = 1500, offset = None ,duration = 60):
         """
         Initializes a Plotter object
@@ -74,14 +73,22 @@ class OverheadCompare():
         """
         list_dbr = [] # time indexed
         list_veh = [] # vehicle indexed
-
+        list_db = ["trajectories", "trajectories", "reconciled"] # gt, raw, rec
+        trans = DBClient(**config, database_name = "transformed")
+        transformed_collections = trans.list_collection_names()
+        
         # first collection is GT
-        for collection in collections:
-            dbr = DBReader(config, host = config["host"], username = config["username"], password = config["password"], port = config["port"], database_name = timestamp_database, collection_name=collection)
-            veh = DBReader(config, host = config["host"], username = config["username"], password = config["password"], port = config["port"], database_name = vehicle_database, collection_name=collection)
+        for i,collection in enumerate(collections):
+            dbr = DBClient(**config, database_name = "transformed", collection_name=collection)
+            veh = DBClient(**config, database_name = list_db[i], collection_name=collection)
             dbr.create_index("timestamp")
             list_dbr.append(dbr)
             list_veh.append(veh)
+            
+            if collection not in transformed_collections:
+                print("Tranform ", collection)
+                veh.transform()
+            
         
         if len(list_dbr) == 0:
             raise Exception("at least one collection must be specified.")
@@ -201,7 +208,7 @@ class OverheadCompare():
             # Add vehicle ids in cache_colors 
             for doc in docs:   
                 for veh_id in doc['id']:
-                    cache_colors.put(veh_id, np.random.rand(3,)/2)
+                    cache_colors.put(veh_id, np.random.rand(3,)*0.7)
                 
             # GT
             traj_cursor = self.list_veh[0].collection.find({"_id": {"$in": doc0["id"]} }, 
@@ -328,11 +335,9 @@ if True and __name__=="__main__":
     with open('config.json') as f:
         parameters = json.load(f)
     
-    vehicle_database = "trajectories"
-    timestamp_database = "transformed"
-    collection0 = "groundtruth_scene_1"
-    collection1 = "paradoxical_wallaby--RAW_GT1" # collection name is the same in both databases
-    collection2 = "paradoxical_wallaby--RAW_GT1__boggles"
+    gt = "groundtruth_scene_1"
+    raw = "sibilant_zebra--RAW_GT1" # collection name is the same in both databases
+    rec = "sibilant_zebra--RAW_GT1__lionizes"
     # collection2 = None
     framerate = 25
     x_min = 0
@@ -340,8 +345,8 @@ if True and __name__=="__main__":
     offset = 0
     duration = None
 
-    p = OverheadCompare(parameters, vehicle_database = vehicle_database, timestamp_database=timestamp_database, 
-                collections = [collection0, collection1,collection2,collection2],
+    p = OverheadCompare(parameters, 
+                collections = [gt, raw, rec],
                 framerate = framerate, x_min = x_min, x_max=x_max, offset = offset, duration=duration)
     p.animate(save=False, extra="")
     
