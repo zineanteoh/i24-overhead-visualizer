@@ -6,33 +6,28 @@ Key:
 - Press [spacebar] to pause/resume animation
 
 ## Example
-
+### run ```overhead_compare.py``` to visualize ground truth, raw and reconciled collection together. GT is plotted in light grey.
 ```python
-config = {
+parameters = {
   "host": "<mongodb-host>",
   "port": 27017,
   "username": "<mongodb-username>",
   "password": "<mongodb-password>"
 }
+gt = "groundtruth_scene_1"
+raw = "sibilant_zebra--RAW_GT1" # collection name is the same in both databases
+rec = "sibilant_zebra--RAW_GT1__lionizes"
 
-# Collection with vehicle ID index 
-vehicle_database = "trajectories"
-vehicle_collection = "batch_reconciled"
-        
-# Collection with timestamp index
-timestamp_database = "transformed"
-timestamp_collection = "batch_reconciled_transformed"
-
-window_size = 10
 framerate = 25
 x_min = 0
-x_max = 2000
-duration = 7
+x_max = 1500
+offset = 0
+duration = None
 
-p = Plotter(parameters, vehicle_database=vehicle_database, vehicle_collection=vehicle_collection,
-            timestamp_database=timestamp_database, timestamp_collection=timestamp_collection,
-            window_size = window_size, framerate = framerate, x_min = x_min, x_max=x_max, duration=duration)
-p.animate(save=False)
+p = OverheadCompare(parameters, 
+            collections = [gt, raw, rec],
+            framerate = framerate, x_min = x_min, x_max=x_max, offset = offset, duration=duration)
+p.animate(save=False, extra="")
 ```
 
 Results: 
