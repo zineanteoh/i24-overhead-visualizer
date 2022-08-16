@@ -14,12 +14,14 @@ import matplotlib.patches as patches
 import numpy as np
 import matplotlib.animation as animation
 from datetime import datetime
-from i24_logger.log_writer import logger, catch_critical
+from i24_logger.log_writer import catch_critical
 import queue
 import mplcursors
 from collections import OrderedDict
 import json
 from copy import copy
+import time
+import requests
 
  
 class LRUCache:
@@ -40,8 +42,10 @@ class LRUCache:
             self.cache.move_to_end(key)
             return self.cache[key]
  
-    def put(self, key: int, value: int) -> None:
+    def put(self, key: int, value: int, update = False) -> None:
         if key not in self.cache: # do not update with new value
+            self.cache[key] = value
+        elif update:
             self.cache[key] = value
         self.cache.move_to_end(key)
         if len(self.cache) > self.capacity:
@@ -86,7 +90,7 @@ class OverheadCompare():
             list_veh.append(veh)
             
             if collection not in transformed_collections:
-                print("Tranform ", collection)
+                # print("Transform ", collection)
                 veh.transform()
             
         
@@ -182,11 +186,14 @@ class OverheadCompare():
                 DESCRIPTION.
             """
             # Stop criteria
-            doc0 = self.time_cursor.next()
+            try:
+                doc0 = self.time_cursor.next()
+            except StopIteration:
+                return
             curr_time = doc0["timestamp"]
-            if curr_time >= self.t_max:
-                print("Reach the end of time. Exit.")
-                raise StopIteration
+            # if curr_time >= self.t_max:
+            #     print("Reach the end of time. Exit.")
+            #     return
             docs = []
             for dbr in self.list_dbr[1:]:
                 doc = dbr.find_one("timestamp", curr_time)
@@ -208,7 +215,7 @@ class OverheadCompare():
             # Add vehicle ids in cache_colors 
             for doc in docs:   
                 for veh_id in doc['id']:
-                    cache_colors.put(veh_id, np.random.rand(3,)*0.7)
+                    cache_colors.put(veh_id, np.random.rand(3,)*0.7, update=False)
                 
             # GT
             traj_cursor = self.list_veh[0].collection.find({"_id": {"$in": doc0["id"]} }, 
@@ -216,7 +223,7 @@ class OverheadCompare():
             # add vehicle dimension to cache
             for traj in traj_cursor:
                 # print("** in curosr")
-                cache_vehicle.put(traj["_id"], [traj["length"], traj["width"], traj["coarse_vehicle_class"]])
+                cache_vehicle.put(traj["_id"], [traj["length"], traj["width"], traj["coarse_vehicle_class"]], update=True)
                     
             
             # query for vehicle dimensions if not in doc (GT or reconciled)
@@ -228,11 +235,11 @@ class OverheadCompare():
                     for traj in traj_cursor:
                         # print("** in curosr")
                         # print("*put ", i, traj["_id"])
-                        cache_vehicle.put(traj["_id"], [traj["length"], traj["width"], traj["coarse_vehicle_class"]])
+                        cache_vehicle.put(traj["_id"], [traj["length"], traj["width"], traj["coarse_vehicle_class"]], update=True)
                 else:
-                    for index, veh_id in enumerate(doc['id']):
-                        # print("**put ", i, veh_id)
-                        cache_vehicle.put(veh_id, doc['dimensions'][index])      
+                    for index, veh_id in enumerate(doc['id']):    
+                        cache_vehicle.put(veh_id, doc['dimensions'][index], update=True)  
+                        # print("**put ", veh_id, doc['dimensions'][index])
              
             # plot GT
             for index in range(len(doc0["position"])):
@@ -289,9 +296,19 @@ class OverheadCompare():
 
         
         if save:
-            file_name = "anim_overheadcomparison_" + self.list_veh[1].collection._Collection__name + "_"+extra
-            self.anim.save('{}.mp4'.format(file_name), writer='ffmpeg', fps=self.framerate)
+            now = datetime.utcfromtimestamp(int(time.time())).strftime('%Y-%m-%d_%H-%M-%S')
+            file_name = now+"_" + self.list_veh[2].collection._Collection__name +extra+".mp4"
+            print(file_name)
+            self.anim.save(file_name, writer='ffmpeg', fps=self.framerate)
             # self.anim.save('{}.gif'.format(file_name), writer='imagemagick', fps=self.framerate)
+            print("saved.")
+            url = 'http://10.2.219.208:5991/upload?type=video'
+            files = {'upload_file': open(file_name,'rb')}
+            ret = requests.post(url, files=files)
+            if ret.status_code == 200:
+                print('Uploaded!')
+        
+        
         else:
             fig.tight_layout()
             plt.show()
@@ -316,38 +333,51 @@ class OverheadCompare():
                 printed = set()
                 self.cursor = mplcursors.cursor(hover=True)
                 def on_add(sel):
-                    if self.paused and (sel.artist.get_label()[0] != "_"):
-                        label = sel.artist.get_label()
-                        if label not in printed:
-                            print(label)
-                            printed.add(label)
-                        sel.annotation.set_text(sel.artist.get_label())
+                    if self.paused:
+                        if sel.artist.get_label() and (sel.artist.get_label()[0] != "_"):
+                            label = sel.artist.get_label()
+                            if label not in printed:
+                                print(label)
+                                printed.add(label)
+                            sel.annotation.set_text(sel.artist.get_label())
                 # connect mouse event to hover for car ID
                 self.cursor.connect("add", lambda sel: on_add(sel))
             self.paused = not self.paused
 
     
 
-    
-if True and __name__=="__main__":
-    
-
+def main(rec, gt = "groundtruth_scene_1_130", framerate = 25, x_min=0, x_max=2000, offset=0, duration=90, save=False, extra=""):
     with open('config.json') as f:
         parameters = json.load(f)
     
-    gt = "groundtruth_scene_1"
-    raw = "sibilant_zebra--RAW_GT1" # collection name is the same in both databases
-    rec = "sibilant_zebra--RAW_GT1__lionizes"
-    # collection2 = None
-    framerate = 25
-    x_min = 0
-    x_max = 1500
-    offset = 0
-    duration = None
-
+    raw = rec.split("__")[0]
+    print("Generating a video for {}. Please hold tight...".format(rec))
     p = OverheadCompare(parameters, 
                 collections = [gt, raw, rec],
                 framerate = framerate, x_min = x_min, x_max=x_max, offset = offset, duration=duration)
-    p.animate(save=False, extra="")
+    p.animate(save=save, extra=extra)
+    
+    
+if __name__=="__main__":
+    
+    main()
+
+    # with open('config.json') as f:
+    #     parameters = json.load(f)
+    
+    # gt = "groundtruth_scene_1_130"
+    # rec = "fastidious_lynx--RAW_GT1__surrenders"
+    # raw = rec.split("__")[0]
+    # # collection2 = None
+    # framerate = 25
+    # x_min = 0
+    # x_max = 2000
+    # offset = 0
+    # duration = 90
+
+    # p = OverheadCompare(parameters, 
+    #             collections = [gt, raw, rec],
+    #             framerate = framerate, x_min = x_min, x_max=x_max, offset = offset, duration=duration)
+    # p.animate(save=True, extra="_8.6")
     
     
