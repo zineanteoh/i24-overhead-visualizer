@@ -360,7 +360,7 @@ def main(rec, gt = "groundtruth_scene_1_130", framerate = 25, x_min=0, x_max=200
     
 if __name__=="__main__":
     
-    main()
+    main(rec = "sympathetic_axylotl--RAW_GT1__negotiates")
 
     # with open('config.json') as f:
     #     parameters = json.load(f)
