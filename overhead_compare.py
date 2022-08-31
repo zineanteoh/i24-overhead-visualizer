@@ -22,6 +22,8 @@ import json
 from copy import copy
 import time
 import requests
+import os
+from bson.objectid import ObjectId
 
  
 class LRUCache:
@@ -31,18 +33,18 @@ class LRUCache:
     get(): return the key-value in cache if exists, otherwise return -1
     put(): (no update) 
     """
-    def __init__(self, capacity: int):
+    def __init__(self, capacity):
         self.cache = OrderedDict()
         self.capacity = capacity
  
-    def get(self, key: int) -> int:
+    def get(self, key):
         if key not in self.cache:
             return -1
         else:
             self.cache.move_to_end(key)
             return self.cache[key]
  
-    def put(self, key: int, value: int, update = False) -> None:
+    def put(self, key, value, update = False):
         if key not in self.cache: # do not update with new value
             self.cache[key] = value
         elif update:
@@ -99,11 +101,11 @@ class OverheadCompare():
         
         # get plotting ranges
         t_min = max([dbr.get_min("timestamp") for dbr in list_dbr])
-       
+        t_max = min([dbr.get_max("timestamp") for dbr in list_dbr])
         if offset:
-            t_min += offset
-        if duration: t_max = t_min+duration 
-        else: t_max = min([dbr.get_max("timestamp") for dbr in list_dbr])
+            t_min += offset  
+        if duration: 
+            t_max = min(t_max, t_min + duration)
         
         self.x_start = x_min
         self.x_end = x_max
@@ -112,7 +114,6 @@ class OverheadCompare():
         
         # Initialize animation
         self.anim = None
-        # TODO: framerate for timestmap
         self.framerate = framerate if framerate else 25
         
         self.lanes = [i*12 for i in range(-1,12)]   
@@ -125,22 +126,18 @@ class OverheadCompare():
         
         self.list_dbr =  list_dbr
         self.list_veh = list_veh
-        
-
     
+
         
     @catch_critical(errors = (Exception))
-    def animate(self, save = False, extra=""):
+    def animate(self, save = False, upload = False, extra=""):
         """
         Advance time window by delta second, update left and right pointer, and cache
         """     
         # set figures: two rows. Top: dbr1 (ax_o), bottom: dbr2 (ax_o2). 4 lanes in each direction
         num = len(self.list_dbr)-1
         fig, axs = plt.subplots(num,1,figsize=(16,3*num))
-             
-        # TODO: make size parameters
-        cache_vehicle = LRUCache(200*num)
-        cache_colors = LRUCache(200*num)
+        self.labels = None
         
         def on_xlims_change(event_ax):
             # print("updated xlims: ", event_ax.get_xlim())
@@ -157,52 +154,106 @@ class OverheadCompare():
             ax.set(xlim=[self.x_start, self.x_end])
             ax.set_ylabel("EB    WB")
             ax.set_xlabel("Distance in feet")
-            ax.callbacks.connect('xlim_changed', on_xlims_change)
+            # ax.callbacks.connect('xlim_changed', on_xlims_change)
       
-        
         self.time_cursor = self.list_dbr[0].get_range("timestamp", self.t_min, self.t_max)
-        plt.gcf().autofmt_xdate()
+        # plt.gcf().autofmt_xdate()
         
         
         @catch_critical(errors = (Exception))
         def init():
-            for ax in axs:
-                # plot lanes on overhead view
+            # initialize caches
+            self.by_label = LRUCache(10)
+            self.veh_cache =  [LRUCache(400) for _ in self.list_dbr]
+            # NIXIPIN
+            gt_query = self.list_veh[0].collection.aggregate([
+                {"$match": {"$and" : [{"first_timestamp": {"$lte": self.t_max}},{"last_timestamp": {"$gte": self.t_min}}]}},
+                {'$project':{ 'width':1, 'length':1}}])
+            for doc in gt_query:
+                val = {"dim": [doc["length"], doc["width"]],
+                       "kwargs": {
+                            "color": [0.8]*3, # light grey
+                           # "color": np.random.rand(3,)*0.5,
+                           "fill": True
+                           # "label": "GT"}
+                           }
+                       }
+
+                self.veh_cache[0].put(doc["_id"], val, update=False)
+                
+            # plot lanes on overhead view
+            for ax in axs:  
                 for i in range(-1, 12):
                     if i in (-1, 5, 11):
                         ax.axhline(y=i*12, linewidth=0.5, color='k')
                     else:
                         ax.axhline(y=i*12, linewidth=0.1, color='k')
             
+
             return axs,
               
 
         @catch_critical(errors = (Exception))
-        def update_cache(frame_text):
+        def update_cache(curr_time):
             """
-            Returns
-            -------
-            delta : increment in time (sec)
-                DESCRIPTION.
+            Update the cache for each collection (except for GT)
             """
+            # update cache by new queries
+            for i, dbr in enumerate(self.list_dbr[1:]):
+                doc = dbr.find_one("timestamp", curr_time)
+                if not doc:
+                    doc = {"id": [], "position":[], "dimensions":[]}
+                if i == 1: # do not query for width and length, cause they are arrays
+                    query = self.list_veh[i+1].collection.find({"_id": {"$in": doc["id"]} }, 
+                                               {"width":1, "length":1, "feasibility": 1, "fragment_ids": 1, "merged_ids": 1})
+                else:
+                    query = self.list_veh[i+1].collection.find({"_id": {"$in": doc["id"]} }, 
+                                               {"feasibility": 1, "fragment_ids": 1, "merged_ids": 1})
+                for d in query:
+                    if "fragment_ids" in d and len(d["fragment_ids"]) > 1: # stitched
+                        kwargs = {
+                            "color": [0,1,0], # green
+                            "fill": False,
+                            "linewidth": 2,
+                            "label": "merged/stitched",
+                            # "label": d["_id"]
+                            }
+                    else:
+                        kwargs = {
+                            "color": np.random.rand(3,)*0.5,
+                            "fill": True,
+                            "linewidth": 0,
+                            "alpha": 0.7,
+                            # "label": "stitched",
+                            # "label": d["_id"]
+                            }
+                    if i == 1:
+                        val = {"dim": [d["length"], d["width"]],
+                               "kwargs": kwargs,
+                              } 
+                    else:
+                        val = {"kwargs": kwargs} 
+                    self.veh_cache[i+1].put(d["_id"], val, update=False)
+                    
+                    
+        @catch_critical(errors = (Exception))    
+        def update_plot(frame):
+            '''
+            Advance time cursor and update the artist
+            '''
             # Stop criteria
             try:
                 doc0 = self.time_cursor.next()
             except StopIteration:
+                print("Reach the end of time. Exit.")
                 return
-            curr_time = doc0["timestamp"]
-            # if curr_time >= self.t_max:
-            #     print("Reach the end of time. Exit.")
-            #     return
-            docs = []
-            for dbr in self.list_dbr[1:]:
-                doc = dbr.find_one("timestamp", curr_time)
-                if not doc:
-                    doc = {"id": [], "position":[], "dimensions":[]}
-                docs.append(doc)
             
+            # Update title
+            curr_time = doc0["timestamp"]
             time_text = datetime.utcfromtimestamp(int(curr_time)).strftime('%m/%d/%Y, %H:%M:%S')
             plt.suptitle(time_text, fontsize = 20)
+            
+            update_cache(curr_time)
             
             # remove all car_boxes and verticle lines
             for ax in axs:
@@ -211,35 +262,6 @@ class OverheadCompare():
                     box.remove()
             while not self.annot_queue.empty():
                 self.annot_queue.get(block=False).remove()
-                
-            # Add vehicle ids in cache_colors 
-            for doc in docs:   
-                for veh_id in doc['id']:
-                    cache_colors.put(veh_id, np.random.rand(3,)*0.7, update=False)
-                
-            # GT
-            traj_cursor = self.list_veh[0].collection.find({"_id": {"$in": doc0["id"]} }, 
-                                       {"width":1, "length":1, "coarse_vehicle_class": 1})
-            # add vehicle dimension to cache
-            for traj in traj_cursor:
-                # print("** in curosr")
-                cache_vehicle.put(traj["_id"], [traj["length"], traj["width"], traj["coarse_vehicle_class"]], update=True)
-                    
-            
-            # query for vehicle dimensions if not in doc (GT or reconciled)
-            for i,doc in enumerate(docs):
-                if "dimensions" not in doc:
-                    traj_cursor = self.list_veh[i+1].collection.find({"_id": {"$in": doc["id"]} }, 
-                                               {"width":1, "length":1, "coarse_vehicle_class": 1})
-                    # add vehicle dimension to cache
-                    for traj in traj_cursor:
-                        # print("** in curosr")
-                        # print("*put ", i, traj["_id"])
-                        cache_vehicle.put(traj["_id"], [traj["length"], traj["width"], traj["coarse_vehicle_class"]], update=True)
-                else:
-                    for index, veh_id in enumerate(doc['id']):    
-                        cache_vehicle.put(veh_id, doc['dimensions'][index], update=True)  
-                        # print("**put ", veh_id, doc['dimensions'][index])
              
             # plot GT
             for index in range(len(doc0["position"])):
@@ -247,47 +269,70 @@ class OverheadCompare():
                 car_y_pos = doc0["position"][index][1]
 
                 # print("** ",cache_vehicle.get(doc0["id"][index]))
-                # print(len(cache_vehicle.cache))
+                # print("*** ", len(self.veh_cache[0].cache))
                 # print(len(cache_colors.cache))
-                car_length, car_width, _ = cache_vehicle.get(doc0["id"][index])
-
-                box = patches.Rectangle((car_x_pos, car_y_pos),
-                                        car_length, car_width, 
-                                        color=[0.8,0.8,0.8])
+                # print(doc0["id"][index])
+                # print(doc0["id"][index] in self.veh_cache[0].cache.keys())
+                gt_d = self.veh_cache[0].get(doc0["id"][index])
+                car_length, car_width = gt_d["dim"]
+                car_y_pos -= 0.5 * car_width
+                if car_y_pos >= 60: # west bound
+                    car_x_pos -= car_length
+                    
+                box = patches.Rectangle(xy = (car_x_pos, car_y_pos),
+                                        width = car_length, height=car_width,
+                                        **gt_d["kwargs"]) # light grey
                 for i in range(num):
                     axs[i].add_patch(copy(box)) 
                     
                     
             # plot vehicles
-            for i, doc in enumerate(docs):
+            for i, dbr in enumerate(self.list_dbr[1:]):
+                doc = dbr.find_one("timestamp", curr_time)
+                if doc is None:
+                    continue
                 for index in range(len(doc["position"])):
                     car_x_pos = doc["position"][index][0]
                     car_y_pos = doc["position"][index][1]
-
-                    # print("** ",cache_vehicle.get(doc["id"][index]))
-                    # print(i,doc["id"][index])
-                    car_length, car_width, _ = cache_vehicle.get(doc["id"][index])
-
-                    box = patches.Rectangle((car_x_pos, car_y_pos),
-                                            car_length, car_width, 
-                                            color=cache_colors.get(doc["id"][index]),
-                                            label=doc["id"][index])
+                    d = self.veh_cache[i+1].get(doc["id"][index])
+                    try: # i==1
+                        car_length, car_width = d["dim"]
+                    except: #i = 0
+                        car_length, car_width = doc['dimensions'][index][:2]
+                    car_y_pos -= 0.5 * car_width
+                    if car_y_pos >= 60: # west bound
+                        car_x_pos -= car_length
+                
+                    box = patches.Rectangle(xy = (car_x_pos, car_y_pos),
+                                            width = car_length, height=car_width,
+                                            **d["kwargs"])
+                
                     axs[i].add_patch(box)   
                     # add annotation
-                    annot = axs[i].annotate(doc['_id'], xy=(car_x_pos,car_y_pos))
-                    annot.set_visible(False)
-                    self.annot_queue.put(annot)
-
+                    # if i == 1:
+                    #     annot = axs[i].annotate(doc["id"][index], xy=(car_x_pos,car_y_pos))
+                    #     annot.set_visible(False)
+                    #     self.annot_queue.put(annot)
+                    
+            # do not update legend
+            try:
+                handles, labels = plt.gca().get_legend_handles_labels()
+                for i,label in enumerate(labels):
+                    self.by_label.put(label, handles[i], update=True)
+                for i in range(num):
+                    axs[i].legend(self.by_label.cache.values(), self.by_label.cache.keys(), loc='lower right', bbox_to_anchor=(1, 1))
+            except:
+                pass
+            
             return axs
         
-        
-        frame_text = None
-        self.anim = animation.FuncAnimation(fig, func=update_cache,
+        frame = None
+        self.anim = animation.FuncAnimation(fig, func=update_plot,
                                             init_func= init,
                                             frames=int(self.t_max-self.t_min)*self.framerate,
                                             repeat=False,
                                             interval=1/self.framerate * 1000, # in ms
-                                            fargs=( frame_text), # specify time increment in sec to update query
+                                            fargs=(frame ),
                                             blit=False,
                                             cache_frame_data = False,
                                             save_count = 1)
@@ -302,11 +347,13 @@ class OverheadCompare():
             self.anim.save(file_name, writer='ffmpeg', fps=self.framerate)
             # self.anim.save('{}.gif'.format(file_name), writer='imagemagick', fps=self.framerate)
             print("saved.")
-            url = 'http://10.2.219.208:5991/upload?type=video'
-            files = {'upload_file': open(file_name,'rb')}
-            ret = requests.post(url, files=files)
-            if ret.status_code == 200:
-                print('Uploaded!')
+            
+            if upload:
+                url = 'http://viz-dev.isis.vanderbilt.edu:5991/upload?type=video'
+                files = {'upload_file': open(file_name,'rb')}
+                ret = requests.post(url, files=files)
+                if ret.status_code == 200:
+                    print('Uploaded!')
         
         
         else:
@@ -346,38 +393,23 @@ class OverheadCompare():
 
     
 
-def main(rec, gt = "groundtruth_scene_1_130", framerate = 25, x_min=0, x_max=2000, offset=0, duration=90, save=False, extra=""):
-    with open('config.json') as f:
-        parameters = json.load(f)
+def main(rec, gt = "groundtruth_scene_2_57", framerate = 25, x_min=-100, x_max=2200, offset=0, duration=90, 
+         save=False, upload=False, extra=""):
+    
+    with open(os.path.join(os.environ["USER_CONFIG_DIRECTORY"], "db_param.json")) as f:
+        db_param = json.load(f)
     
     raw = rec.split("__")[0]
-    print("Generating a video for {}. Please hold tight...".format(rec))
-    p = OverheadCompare(parameters, 
+    print("Generating a video for {}...".format(rec))
+    p = OverheadCompare(db_param, 
                 collections = [gt, raw, rec],
                 framerate = framerate, x_min = x_min, x_max=x_max, offset = offset, duration=duration)
-    p.animate(save=save, extra=extra)
+    p.animate(save=save, upload=upload, extra=extra)
     
     
 if __name__=="__main__":
-    
-    main(rec = "sympathetic_axylotl--RAW_GT1__negotiates", save=True)
 
-    # with open('config.json') as f:
-    #     parameters = json.load(f)
+    main(rec = "zonked_cnidarian--RAW_GT2__articulates", save=False, upload = False)
     
-    # gt = "groundtruth_scene_1_130"
-    # rec = "fastidious_lynx--RAW_GT1__surrenders"
-    # raw = rec.split("__")[0]
-    # # collection2 = None
-    # framerate = 25
-    # x_min = 0
-    # x_max = 2000
-    # offset = 0
-    # duration = 90
-
-    # p = OverheadCompare(parameters, 
-    #             collections = [gt, raw, rec],
-    #             framerate = framerate, x_min = x_min, x_max=x_max, offset = offset, duration=duration)
-    # p.animate(save=True, extra="_8.6")
-    
-    
+        
+   
