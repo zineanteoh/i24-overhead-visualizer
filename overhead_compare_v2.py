@@ -82,8 +82,9 @@ class OverheadCompareV2():
         Set up frame to plot
         """
         # frame to plot
-        self.frame = np.ones(shape=(self.window_h, self.window_w, 3),
-                              dtype=np.float64)
+        self.frame = np.full(shape=(self.window_h, self.window_w, 3), 
+                             fill_value=255,
+                             dtype=np.float64)
         # add line 
         
 
@@ -97,10 +98,17 @@ class OverheadCompareV2():
         h = 25
         c = (255, 0, 0)
         
+        # write to file
+        fourcc = cv2.VideoWriter_fourcc(*'XVID')
+        out = cv2.VideoWriter('your_video.mp4', fourcc, self.framerate, (self.window_w, self.window_h))
+
         end = False
+        frame = 0
         while True:
             if end:
                 break
+            
+            
             
             # temporary move mechanism
             if x1 + w > self.window_w:
@@ -112,17 +120,28 @@ class OverheadCompareV2():
             else:
                 x1 += 5
             
-            
+            # clear frame
             self.refresh_frame()
+            # plot vehicles
             cv2.rectangle(self.frame, (x1, y1), (x1 + w, y1 + h), c, cv2.FILLED)
+            # add frame number
+            cv2.putText(self.frame, 'Frame # {f}'.format(f=frame), 
+                        org=(10, self.window_h - 20), fontFace=cv2.FONT_HERSHEY_DUPLEX,
+                        fontScale=1, color=(0, 0, 0), thickness=1, lineType=1)
             cv2.imshow("i24 overhead compare v2", self.frame)
             
-            k = cv2.waitKey(int(1/self.framerate * 1000)) & 0xFF
+            # save
+            out.write(self.frame.astype(np.uint8))
+            
             # end with escape
+            k = cv2.waitKey(int(1000/self.framerate)) & 0xFF
             if k == 27:
                 end = True
                 break
-        print("fr: ", int(1/self.framerate * 1000))
+            
+            frame += 1
+        print("fr: ", int(1000/self.framerate))
+        out.release()
         cv2.destroyAllWindows()
         return
 
